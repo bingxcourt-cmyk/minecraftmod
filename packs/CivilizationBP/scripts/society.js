@@ -189,7 +189,7 @@ export function assignRoles(civ) {
 export function hungerTick(civ) {
   let starving = false;
   // Ночью спящие жители тратят меньше сил.
-  const rate = isNight() ? 0.5 : 1;
+  const rate = isNight() && !S.nightWork ? 0.5 : 1;
   for (const e of S.members.get(civ.id) ?? []) {
     if (!e.isValid) continue;
     const brain = brainOf(e, civ.id);
@@ -283,6 +283,15 @@ function rects(skipCiv) {
       out.push({ x: civ.project.x, z: civ.project.z, w: W, d: D });
     }
     if (civ.quarry) out.push({ x: civ.quarry.x, z: civ.quarry.z, w: 5, d: 5 });
+    if (civ.mine) {
+      // Вход и первые ступеньки — у поверхности, над ними не строим.
+      const m = civ.mine;
+      const dx = [1, 0, -1, 0][m.d];
+      const dz = [0, 1, 0, -1][m.d];
+      const x2 = m.x + dx * 6;
+      const z2 = m.z + dz * 6;
+      out.push({ x: Math.min(m.x, x2) - 1, z: Math.min(m.z, z2) - 1, w: Math.abs(x2 - m.x) + 3, d: Math.abs(z2 - m.z) + 3 });
+    }
     if (civ !== skipCiv && civ.buildings.length === 0) out.push({ x: civ.center.x - 6, z: civ.center.z - 6, w: 12, d: 12 });
   }
   return out;
@@ -356,8 +365,15 @@ export function searchTick(civ) {
   }
 }
 
-export function quarryTick(civ) {
-  if (civ.quarry) return;
+// Место под вход в шахту. Старый открытый карьер (из прошлой версии) оставляем как есть.
+export function mineTick(civ) {
+  if (civ.quarry) {
+    const q = civ.quarry;
+    civ.buildings.push({ t: "quarry", x: q.x, y: q.top, z: q.z, r: 0, w: 5, d: 5 });
+    civ.quarry = null;
+    markDirty(civ);
+  }
+  if (civ.mine) return;
   if (!(S.members.get(civ.id) ?? []).some((e) => brainOf(e, civ.id).role === "miner")) return;
   let s = S.qsearch.get(civ.id);
   if (!s) {
@@ -368,7 +384,18 @@ export function quarryTick(civ) {
     const c = s.cands[s.i++];
     const v = validate(civ, c, 3);
     if (!v) continue;
-    civ.quarry = { x: c.x, z: c.z, y: v.max, top: v.max, ci: 0, depth: 0 };
+    const x = c.x + 2;
+    const z = c.z + 2;
+    const g = groundAt(DIM(), x, z);
+    if (!g || g.liquid) continue;
+    // Лестница начинается в сторону от центра поселения.
+    const vx = x - civ.center.x;
+    const vz = z - civ.center.z;
+    const d = Math.abs(vx) > Math.abs(vz) ? (vx > 0 ? 0 : 2) : vz > 0 ? 1 : 3;
+    // Первая шахта — до железа (Y≈16), каждая вторая — глубокая, за алмазами.
+    const deep = (civ.minesDone ?? 0) % 2 === 1;
+    const target = deep ? -54 : Math.min(16, g.y - 12);
+    civ.mine = { x, y: g.y, z, d, target, idx: 0, veins: [], wet: 0 };
     S.qsearch.delete(civ.id);
     markDirty(civ);
     return;

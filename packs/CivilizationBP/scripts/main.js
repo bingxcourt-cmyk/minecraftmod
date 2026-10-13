@@ -2,7 +2,7 @@ import { world, system } from "@minecraft/server";
 import { S, P, DIM, getProp, setProp, loaded, isNight, loadAll, saveAll, markDirty } from "./core.js";
 import { brainOf, moveStep, think, resetTask, updateTag, resetPathBudget } from "./workers.js";
 import {
-  assignRoles, searchTick, quarryTick, hungerTick, growthTick, eraTick, colonyTick, colonyCheck,
+  assignRoles, searchTick, mineTick, hungerTick, growthTick, eraTick, colonyTick, colonyCheck,
   settlerThink, completeProject, collapseCheck, foundingScan,
 } from "./society.js";
 import { diplomacyTick, soldierThink, warBuffs, golemTick } from "./war.js";
@@ -75,7 +75,7 @@ function everySecond() {
         assignRoles(civ);
       }
       searchTick(civ);
-      quarryTick(civ);
+      mineTick(civ);
       colonyCheck(civ);
       if (S.clock % 20 === 0) hungerTick(civ);
       if (S.clock % slow === 0) {
@@ -120,8 +120,8 @@ function thinkAll() {
     if (!e || !e.isValid) continue;
     const civ = S.civs.get(b.civId);
     if (!civ) continue;
-    if (night && !ALWAYS_AWAKE.has(b.role)) {
-      // Ночью мирные жители отдыхают.
+    if (night && !S.nightWork && !ALWAYS_AWAKE.has(b.role)) {
+      // Режим «ночью спят»: мирные жители отдыхают.
       b.target = null;
       b.resting = true;
       continue;
@@ -153,7 +153,7 @@ function rescueAll() {
 }
 
 function moveAll() {
-  resetPathBudget(1);
+  resetPathBudget(system.currentTick % 4 === 0 ? 1 : 0);
   for (const b of S.brains.values()) {
     if (b.target && !b.resting) moveStep(b);
   }

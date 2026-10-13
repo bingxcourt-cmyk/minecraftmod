@@ -1,8 +1,10 @@
 import { BlockPermutation, EntityDamageCause, system } from "@minecraft/server";
 import { S, P, DIM, getB, getProp, setProp, dXZ, rnd, pick, markDirty, sound, particle, cdTicks, loaded } from "./core.js";
-import { isLog, isLeaves, isStoneLike, isIronOre, isProtected, isPassableId, isNaturalGround, walkY, standY, strip } from "./blocks.js";
+import { isLog, isLeaves, isProtected, isPassableId, isNaturalGround, walkY, standY, strip } from "./blocks.js";
 import { makeOps, cropCells, dims } from "./blueprints.js";
-import { findPath, findSafeSpot, safeTeleport, rescueIfStuck } from "./nav.js";
+import { findPath, findSafeSpot, rescueIfStuck } from "./nav.js";
+import { minerThink } from "./mine.js";
+import { ERAS } from "./society.js";
 import { TOOL_FOR, TIERS, toolLabel, craftNeed, craft, useTool } from "./tools.js";
 
 export const ROLE_NAME = {
@@ -76,7 +78,7 @@ export const resetPathBudget = (n) => (pathBudget = n);
 function requestPath(brain, p, t) {
   if (pathBudget <= 0 || (brain.noPathUntil ?? 0) > system.currentTick) return false;
   pathBudget--;
-  const pts = findPath(p, t, Math.max(1.2, brain.reach - 0.3));
+  const pts = findPath(p, t, Math.max(1.2, brain.reach - 0.3), 200);
   if (!pts || !pts.length) {
     brain.noPathUntil = system.currentTick + 60;
     return false;
@@ -171,7 +173,7 @@ function unstick(ent, brain, dim, t) {
   } catch {}
 }
 
-function wander(civ, brain, r = 10) {
+export function wander(civ, brain, r = 10) {
   if (!brain.wander || near(brain.ent, brain.wander, 1.5, true)) {
     const a = Math.random() * Math.PI * 2;
     const d = rnd(2, r);
@@ -380,80 +382,6 @@ function lumberjack(civ, ent, brain, tick) {
     ent.teleport(ent.location, { facingLocation: { x: pos.x + 0.5, y: pos.y + 0.5, z: pos.z + 0.5 } });
   } catch {}
   brain.cd = tick + cdTicks(14 * mult, brain);
-}
-
-// ---------- Шахтёр ----------
-const isDiamondOre = (id) => id === "minecraft:diamond_ore" || id === "minecraft:deepslate_diamond_ore";
-
-function miner(civ, ent, brain, tick) {
-  const q = civ.quarry;
-  if (!q) return wander(civ, brain, 8);
-  const dim = DIM();
-  const mid = { x: q.x + 2.5, y: q.y + 1, z: q.z + 2.5 };
-  setTarget(brain, mid, 3.5, true);
-  if (!near(ent, mid, 3.8, true)) return;
-  // Спускается в яму к текущему слою.
-  if (Math.abs(ent.location.y - (q.y + 1)) > 2.5) safeTeleport(ent, { x: mid.x, y: q.y + 1, z: mid.z }, 2);
-  let mult = 1;
-  for (let checks = 0; checks < 30; checks++) {
-    if (q.ci >= 25) {
-      q.y--;
-      q.ci = 0;
-      q.depth++;
-      markDirty(civ);
-      if (q.depth > 18 || q.y < -50) return finishQuarry(civ);
-      continue;
-    }
-    const x = q.x + (q.ci % 5);
-    const z = q.z + Math.floor(q.ci / 5);
-    const b = getB(dim, x, q.y, z);
-    if (!b) return;
-    const id = b.typeId;
-    if (b.isAir || isPassableId(id)) {
-      q.ci++;
-      continue;
-    }
-    if (b.isLiquid || id.includes("lava") || id.includes("water") || id === "minecraft:bedrock") return finishQuarry(civ);
-    if (isProtected(id)) {
-      q.ci++;
-      continue;
-    }
-    try {
-      b.setType("minecraft:air");
-    } catch {
-      q.ci++;
-      continue;
-    }
-    q.ci++;
-    // Как у Стива: железо — только каменной киркой и лучше, алмазы — железной и лучше.
-    const use = useTool(ent, "pickaxe");
-    mult = use.mult;
-    if (use.broke) updateTag(ent, brain, civ);
-    if (isIronOre(id)) {
-      if (use.tier >= 2) civ.res.iron += 1;
-    } else if (isDiamondOre(id)) {
-      if (use.tier >= 3) civ.res.diamond = (civ.res.diamond ?? 0) + 1;
-    } else if (isStoneLike(id)) {
-      civ.res.stone += 1;
-      // Глубоко в камне попадаются железные жилы.
-      if (use.tier >= 2 && q.depth >= 4 && Math.random() < 0.03) civ.res.iron += 1;
-    } else if (isLog(id)) civ.res.wood += 3;
-    markDirty(civ);
-    sound(dim, "dig.stone", { x, y: q.y, z });
-    particle(dim, "minecraft:basic_smoke_particle", { x: x + 0.5, y: q.y + 0.5, z: z + 0.5 });
-    try {
-      ent.teleport(ent.location, { facingLocation: { x: x + 0.5, y: q.y + 0.5, z: z + 0.5 } });
-    } catch {}
-    break;
-  }
-  brain.cd = tick + cdTicks(22 * mult, brain);
-}
-
-function finishQuarry(civ) {
-  const q = civ.quarry;
-  if (q) civ.buildings.push({ t: "quarry", x: q.x, y: q.top, z: q.z, r: 0, w: 5, d: 5 });
-  civ.quarry = null;
-  markDirty(civ);
 }
 
 // ---------- Фермер ----------
@@ -726,6 +654,9 @@ function reserveOf(civ) {
   const c = civ._reserve;
   if (c && system.currentTick - c.at < 20) return c.need;
   const need = remainingCost(civ);
+  // Ресурсы, нужные для перехода в следующую эпоху, тоже не тратим на инструменты.
+  const next = ERAS[civ.era]?.next;
+  if (next) for (const k of ["stone", "iron"]) need[k] = Math.max(need[k], next[k] ?? 0);
   // Пока нет центра, бережём стартовые запасы на него.
   if (!civ.buildings.length) {
     need.stone = Math.max(need.stone, 12);
@@ -759,7 +690,7 @@ export function think(civ, ent, brain, tick, hooks) {
   if (TOOL_FOR[brain.role] && crafting(civ, ent, brain, tick)) return;
   switch (brain.role) {
     case "lumberjack": return lumberjack(civ, ent, brain, tick);
-    case "miner": return miner(civ, ent, brain, tick);
+    case "miner": return minerThink(civ, ent, brain, tick);
     case "farmer": return farmer(civ, ent, brain, tick);
     case "hunter": return hunter(civ, ent, brain, tick);
     case "builder": return builder(civ, ent, brain, tick, hooks.onComplete);

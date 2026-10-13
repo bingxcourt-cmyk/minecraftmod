@@ -9,6 +9,7 @@ export const S = {
   brains: new Map(), // entity.id -> состояние «мозга» жителя
   clock: 0, // секунды симуляции (сохраняются)
   speed: 1, // множитель скорости работы
+  nightWork: true, // работают ли мирные жители ночью
   dirty: new Set(),
   search: new Map(), // civId -> поиск места под постройку
   qsearch: new Map(), // civId -> поиск места под карьер
@@ -128,6 +129,7 @@ export function saveAll(force = false) {
     world.setDynamicProperty("civ:index", JSON.stringify([...S.civs.keys()]));
     world.setDynamicProperty("civ:clock", S.clock);
     world.setDynamicProperty("civ:speed", S.speed);
+    world.setDynamicProperty("civ:night", S.nightWork ? "work" : "rest");
   } catch {}
 }
 
@@ -145,6 +147,7 @@ export function loadAll() {
   }
   S.clock = Number(world.getDynamicProperty("civ:clock") ?? 0);
   S.speed = Number(world.getDynamicProperty("civ:speed") ?? 1) || 1;
+  S.nightWork = world.getDynamicProperty("civ:night") !== "rest";
 }
 
 export function deleteCiv(civ) {

@@ -326,6 +326,7 @@ export const TYPES = {
   barracks: { name: "Казармы", gen: barracks },
   castle: { name: "Замок", gen: castle },
   quarry: { name: "Карьер", gen: () => new BP(5, 5).build() },
+  mine: { name: "Шахта", gen: () => new BP(3, 3).build() },
 };
 
 const bpCache = new Map();

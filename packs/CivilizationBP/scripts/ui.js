@@ -6,6 +6,7 @@ import { projectOps, foodCap, ROLE_NAME, brainOf } from "./workers.js";
 import { ERAS, popOf, housingOf, newCiv, join } from "./society.js";
 import { declareWar } from "./war.js";
 import { whLine, whCommand, showWhForm } from "./wh.js";
+import { mineInfo } from "./mine.js";
 import { TOOL_FOR, TIERS, toolTier } from "./tools.js";
 
 export function nearestCiv(p, maxDist) {
@@ -133,6 +134,7 @@ export function showCivForm(pl, civ) {
     `§lПостроек:§r ${civ.buildings.filter((b) => b.t !== "quarry").length}`,
     `§lРесурсы:§r дерево ${r.wood}, камень ${r.stone}, еда ${r.food}/${foodCap(civ)}, железо ${r.iron}, алмазы ${r.diamond ?? 0}`,
     `§lИнструменты:§r ${toolSummary(civ)}`,
+    `§lШахта:§r ${mineInfo(civ)}`,
     `§lРодилось:§r ${civ.born}  §lПогибло:§r ${civ.deaths}  §lПобед в боях:§r ${civ.kills}`,
     parent ? `§lМетрополия:§r ${parent.name}` : "",
     "",
@@ -224,11 +226,19 @@ export function onScriptEvent(ev) {
       saveAll(true);
       return say("§cВсе цивилизации удалены.");
     }
+    case "civ:night": {
+      const a = String(ev.message ?? "").trim().toLowerCase();
+      if (["rest", "sleep", "спят", "сон", "отдых"].includes(a)) S.nightWork = false;
+      else if (["work", "работают", "работа"].includes(a)) S.nightWork = true;
+      else S.nightWork = !S.nightWork;
+      saveAll();
+      return say(S.nightWork ? "§eНочью жители работают." : "§eНочью мирные жители спят (работают только воины).");
+    }
     case "civ:wh": {
       if (!pl || pl.typeId !== "minecraft:player") return say("§cКоманду должен выполнить игрок.");
       return whCommand(pl, ev.message);
     }
     default:
-      if (ev.id.startsWith("civ:")) say("§7Команды: civ:info, civ:speed <x>, civ:found, civ:war, civ:peace, civ:res, civ:reset, civ:wh <профессия|all|off>");
+      if (ev.id.startsWith("civ:")) say("§7Команды: civ:info, civ:speed <x>, civ:found, civ:war, civ:peace, civ:res, civ:reset, civ:wh <профессия|all|off>, civ:night <work|rest>");
   }
 }
