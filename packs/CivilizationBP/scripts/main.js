@@ -17,6 +17,8 @@ import { heldTick, heldCleanup, dropHeld } from "./held.js";
 import { scanThreats, armorTick } from "./defense.js";
 import { raidTick, raidCheck, raiderThink, raidPropOf } from "./bandits.js";
 import { planWall, layWalls } from "./walls.js";
+import { demoTick } from "./territory.js";
+import { smeltTick } from "./industry.js";
 import { creditTick, loadLoans, saveLoans } from "./credit.js";
 import { lightsTick } from "./lights.js";
 import { note, warLog, loadJournal, saveJournal } from "./journal.js";
@@ -94,6 +96,11 @@ function everySecond() {
       const wasActive = civ._active;
       civ._active = isActive(civ);
       if (collapseCheck(civ)) continue;
+      // Защита от «битых» чисел (NaN) в запасах и казне — например, из старого сохранения.
+      if (S.clock % 10 === 1) {
+        for (const k in civ.res) if (!Number.isFinite(civ.res[k])) civ.res[k] = 0;
+        if (!Number.isFinite(civ.coins ?? 0)) civ.coins = 0;
+      }
       // Факелы и фонари расставляются везде, где чанки загружены (и вблизи, и в зоне прорисовки).
       lightsTick(civ);
       civ.peakPop = Math.max(civ.peakPop ?? 0, popOf(civ));
@@ -136,6 +143,7 @@ function everySecond() {
       if (S.clock % 60 === 33) raidTick(civ);
       if (S.clock % 10 === 0) {
         armorTick(civ);
+        smeltTick(civ, (10 / 60) * S.speed);
         eraTick(civ);
         warBuffs(civ);
         for (const e of S.members.get(civ.id) ?? []) updateTag(e, brainOf(e, civ.id), civ);
@@ -151,6 +159,7 @@ function everySecond() {
     if (S.clock % 60 === 50) creditTick(declareWar);
     layRoads();
     layWalls();
+    demoTick();
     if (S.clock % 5 === 0) foundingScan();
     statusTick();
   } catch (e) {

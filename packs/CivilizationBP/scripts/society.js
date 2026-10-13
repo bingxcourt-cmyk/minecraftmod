@@ -8,15 +8,21 @@ import { TYPES, getBP, dims, doorFront, toWorld } from "./blueprints.js";
 import { brainOf, setRole, updateTag, resetTask, remainingCost, fastBuild } from "./workers.js";
 import { findSafeSpot, safeTeleport } from "./nav.js";
 import { note, warEndAll } from "./journal.js";
+import { blockerOf, colonySiteFree, clearRuins } from "./territory.js";
+import { isOwnWall, clearWallFor, replanWall } from "./walls.js";
+import { glassShort } from "./industry.js";
+import { virtualColony } from "./offscreen.js";
 
 export const ERAS = [
   { name: "Племя", queue: ["center", "farm_small", "hut", "hut", "well"], next: { pop: 4, stone: 10 } },
   { name: "Деревня", queue: ["house", "smithy", "farm", "house", "barn", "watchtower"], next: { pop: 7, iron: 6 } },
   { name: "Город", queue: ["townhall", "stonehouse", "barracks", "farm", "stonehouse", "watchtower"], next: { pop: 12, iron: 15 } },
-  { name: "Королевство", queue: ["castle", "stonehouse", "watchtower", "farm", "barracks", "stonehouse"], next: null },
+  { name: "Королевство", queue: ["castle", "stonehouse", "watchtower", "farm", "barracks", "stonehouse"], next: { pop: 30, iron: 40, coins: 5000 } },
+  // Сверхбогатые поселения начинают индустриализацию: стекольный завод и небоскрёбы.
+  { name: "Индустриализация", queue: ["glassworks", "skyscraper", "farm", "skyscraper", "skyscraper"], next: null },
 ];
-const HOUSE_BY_ERA = ["hut", "house", "stonehouse", "stonehouse"];
-const FARM_BY_ERA = ["farm_small", "farm", "farm", "farm"];
+const HOUSE_BY_ERA = ["hut", "house", "stonehouse", "stonehouse", "stonehouse"];
+const FARM_BY_ERA = ["farm_small", "farm", "farm", "farm", "farm"];
 
 // Постройки, уже оплаченные в фоновой симуляции, считаются построенными.
 export const allBuilt = (civ) => [...civ.buildings, ...(civ.offQueue ?? []), ...(civ.project?.paid ? [civ.project] : [])];
@@ -139,7 +145,7 @@ export function assignRoles(civ) {
     adults.push(e);
   }
   const n = adults.length;
-  const want = { soldier: 0, guard: 0, builder: 0, farmer: 0, hunter: 0, miner: 0, lumberjack: 0 };
+  const want = { soldier: 0, guard: 0, builder: 0, farmer: 0, hunter: 0, miner: 0, sander: 0, lumberjack: 0 };
   let left = n;
   const give = (role, k) => {
     const g = Math.max(0, Math.min(k, left));
@@ -171,6 +177,8 @@ export function assignRoles(civ) {
   if (farms > 0) give("farmer", Math.min(farms * 2, Math.round(n * 0.2) + (foodLow ? 1 : 0)) - 1);
   if (n >= 8 && stoneShort > 60) give("miner", 1);
   if (civ.era >= 2 && n >= 12 && wantMiner) give("miner", 1);
+  // Индустриализация: песочники копают песок для стекла (если песок есть поблизости).
+  if (glassShort(civ) > 0 && !((civ.noSand ?? 0) > S.clock)) give("sander", n >= 14 ? 2 : 1);
   if (building && n >= 12) give("builder", 1);
   // Дерева с избытком — лишние руки идут в шахту и на поля.
   if (civ.res.wood > 250 + need.wood) {
@@ -283,6 +291,7 @@ export function eraNeed(civ) {
   if (popOf(civ) < (n.pop ?? 0)) need.push(`жителей ${popOf(civ)}/${n.pop}`);
   if (civ.res.stone < (n.stone ?? 0)) need.push(`камня ${civ.res.stone}/${n.stone}`);
   if (civ.res.iron < (n.iron ?? 0)) need.push(`железа ${civ.res.iron}/${n.iron}`);
+  if ((civ.coins ?? 0) < (n.coins ?? 0)) need.push(`монет ${Math.floor(civ.coins ?? 0)}/${n.coins}`);
   return `До эпохи «${ERAS[civ.era + 1].name}»: ${need.length ? need.join("; ") : "вот-вот"}`;
 }
 
@@ -290,7 +299,7 @@ export function eraTick(civ) {
   const era = ERAS[civ.era];
   if (!era.next || missingQueue(civ).length) return;
   const n = era.next;
-  if (popOf(civ) < (n.pop ?? 0) || civ.res.stone < (n.stone ?? 0) || civ.res.iron < (n.iron ?? 0)) return;
+  if (popOf(civ) < (n.pop ?? 0) || civ.res.stone < (n.stone ?? 0) || civ.res.iron < (n.iron ?? 0) || (civ.coins ?? 0) < (n.coins ?? 0)) return;
   civ.era++;
   civ.qi = 0;
   markDirty(civ);
@@ -370,26 +379,36 @@ function validate(civ, c, gap = 2) {
   for (const b of rects(civ)) {
     if (c.x < b.x + b.w + gap && b.x < c.x + c.W + gap && c.z < b.z + b.d + gap && b.z < c.z + c.D + gap) return undefined;
   }
+  // Чужая земля: до чужих построек не меньше 66 блоков (стены — не ближе 50 друг к другу).
+  const blocker = blockerOf(civ, { x: c.x, z: c.z, w: c.W, d: c.D });
+  if (blocker) {
+    c.blocked = blocker.id;
+    return undefined;
+  }
   const dim = DIM();
   if (!loaded(dim, c) || !loaded(dim, { x: c.x + c.W, z: c.z + c.D })) return undefined;
   let min = 1e9;
   let max = -1e9;
   let sum = 0;
+  let cells = 0;
   for (let x = 0; x < c.W; x++) for (let z = 0; z < c.D; z++) {
+    // Своя стена не мешает: её здесь разберут и потом перестроят по новому контуру.
+    if (civ.wall && isOwnWall(civ, c.x + x, c.z + z)) continue;
     const g = groundAt(dim, c.x + x, c.z + z);
     if (!g || g.liquid || g.unnatural) return undefined;
     min = Math.min(min, g.y);
     max = Math.max(max, g.y);
     sum += g.y;
+    cells++;
   }
-  if (max - min > (c.W * c.D > 120 ? 4 : 3)) return undefined;
+  if (!cells || max - min > (c.W * c.D > 120 ? 4 : 3)) return undefined;
   // Рядом с водой не строим: выровняют площадку ниже уровня воды — и всё затопит.
   for (let x = -2; x <= c.W + 1; x++) for (let z = -2; z <= c.D + 1; z++) {
     if (x >= 0 && x < c.W && z >= 0 && z < c.D) continue;
     const g = groundAt(dim, c.x + x, c.z + z);
     if (g?.liquid) return undefined;
   }
-  return { base: Math.round(sum / (c.W * c.D)), max };
+  return { base: Math.round(sum / cells), max };
 }
 
 export function searchTick(civ, paidOnly = false) {
@@ -402,6 +421,8 @@ export function searchTick(civ, paidOnly = false) {
     if (q.x !== undefined) {
       civ.offQueue.shift();
       civ.project = { t: q.t, x: q.x, y: q.y, z: q.z, r: q.r, step: 0, fromQueue: false, paid: true };
+      const { W, D } = dims(q.t, q.r);
+      if (civ.wall) clearWallFor(civ, { x: q.x, z: q.z, w: W, d: D });
       markDirty(civ);
       return;
     }
@@ -419,8 +440,16 @@ export function searchTick(civ, paidOnly = false) {
   for (let k = 0; k < 4 && s.i < s.cands.length; k++) {
     const c = s.cands[s.i++];
     const v = validate(civ, c);
-    if (!v) continue;
+    if (!v) {
+      if (c.blocked) {
+        s.crowd = (s.crowd ?? 0) + 1;
+        s.by = c.blocked;
+      }
+      continue;
+    }
     civ.project = { t: s.t, x: c.x, y: v.base, z: c.z, r: c.r, step: 0, fromQueue: s.fromQueue, paid: !!s.paid };
+    // Новая постройка выходит за стену — этот кусок стены разбирают (брешь до перестройки).
+    if (civ.wall) clearWallFor(civ, { x: c.x, z: c.z, w: c.W, d: c.D });
     if (!s.paid) noteBuilt(civ, s.t);
     if (s.paid) civ.offQueue.shift();
     S.search.delete(civ.id);
@@ -434,6 +463,13 @@ export function searchTick(civ, paidOnly = false) {
     // Места не нашлось — не забываем постройку, а пробуем позже (за это время могут вырубить лес и т.п.).
     civ.failed = civ.failed ?? {};
     civ.failed[s.t] = S.clock + 120;
+    // Мест мало из-за соседа — повод для войны за территорию.
+    const by = s.by && S.civs.get(s.by);
+    if (by && s.crowd >= s.cands.length * 0.2) {
+      if (civ.crowdBy !== by.id) note("events", `${civ.name}: некуда расти — мешает ${by.name}`);
+      civ.crowdBy = by.id;
+      civ.crowdUntil = S.clock + 900;
+    }
     if (!s.fromQueue) civ.blockedUntil = S.clock + 90;
     markDirty(civ);
   }
@@ -501,6 +537,8 @@ export function completeProject(civ) {
   for (let i = 0; i < 6; i++) particle(dim, "minecraft:villager_happy", { x: mid.x + rnd(-2, 2), y: mid.y + rnd(0, 2), z: mid.z + rnd(-2, 2) });
   note("build", `${civ.name}: построено «${TYPES[p.t].name}»`);
   if (p.t !== "center") layRoad(civ.center, doorFront(b));
+  // Поселение выросло — стену перестраивают под новые габариты.
+  if (civ.wall) replanWall(civ);
 }
 
 /** Тропинка от центра до входа в постройку. */
@@ -545,12 +583,17 @@ export function colonyTick(civ) {
   if ((civ.coloniesFounded ?? 0) >= MAX_COLONIES) return;
   const dim = DIM();
   let dest;
-  for (let i = 0; i < 12 && !dest; i++) {
+  for (let i = 0; i < 16 && !dest; i++) {
     const a = Math.random() * Math.PI * 2;
-    const d = rnd(70, 100);
+    const d = rnd(130, 170);
     const p = { x: Math.floor(civ.center.x + Math.cos(a) * d), z: Math.floor(civ.center.z + Math.sin(a) * d) };
-    if (!loaded(dim, p)) continue;
-    if (S.civs.size >= MAX_CIVS || [...S.civs.values()].some((c) => dXZ(c.center, p) < 60)) continue;
+    // Колонию ставят подальше от чужих земель, чтобы стены были минимум в 50 блоках.
+    if (S.civs.size >= MAX_CIVS || !colonySiteFree(p)) continue;
+    if (!loaded(dim, p)) {
+      // Место за пределами прорисовки — рельеф уточнят, когда чанк загрузится.
+      dest = { x: p.x, y: civ.center.y, z: p.z, virtual: true };
+      continue;
+    }
     const g = groundAt(dim, p.x, p.z);
     if (!g || g.liquid || waterNear(dim, p.x, p.z, 8)) continue;
     dest = { x: p.x, y: g.y + 1, z: p.z };
@@ -588,10 +631,30 @@ export function colonyCheck(civ) {
     return;
   }
   if (!arrived && elapsed < 150) return;
-  if (!loaded(DIM(), c)) return;
+  if (!loaded(DIM(), c)) {
+    // Ушли за пределы прорисовки — колония основывается там, дальше живёт по формулам.
+    civ.colony = null;
+    civ._reassign = true;
+    const list = S.members.get(civ.id) ?? [];
+    for (const e of settlers) {
+      const i = list.indexOf(e);
+      if (i >= 0) list.splice(i, 1);
+      S.brains.delete(e.id);
+      try {
+        e.remove();
+      } catch {}
+    }
+    virtualColony(civ, c, settlers.length, false);
+    markDirty(civ);
+    return;
+  }
+  if (c.virtual) {
+    const g = groundAt(DIM(), c.x, c.z);
+    if (g) c.y = g.y + 1;
+  }
   const colony = newCiv(c, civ.id);
   const give = { wood: Math.min(60, civ.res.wood), stone: Math.min(25, civ.res.stone), food: Math.min(40, civ.res.food), saplings: Math.min(4, civ.res.saplings ?? 0) };
-  for (const k in give) civ.res[k] -= give[k];
+  for (const k in give) civ.res[k] = (civ.res[k] ?? 0) - give[k];
   colony.res = { ...give, iron: 0 };
   const coins = Math.min(40, civ.coins ?? 0);
   civ.coins = (civ.coins ?? 0) - coins;
@@ -706,6 +769,8 @@ export function collapseCheck(civ) {
   const enemy = civ.war ? S.civs.get(civ.war.enemy) : undefined;
   if (enemy) {
     for (const k in civ.res) enemy.res[k] = (enemy.res[k] ?? 0) + Math.floor(civ.res[k] / 2);
+    // Война за землю: победитель разбирает руины и строит там своё.
+    if (civ.war?.res === "land") clearRuins(civ);
     enemy.war = null;
     enemy._reassign = true;
     markDirty(enemy);

@@ -13,6 +13,7 @@ const COST = {
   smithing_table: { wood: 2, iron: 1 }, blast_furnace: { stone: 5, iron: 1 }, anvil: { iron: 5 },
   bell: { iron: 1 }, lantern: {}, iron_bars: { iron: 1 },
   hay_block: { food: 2 },
+  glass: { glass: 1 }, smooth_stone: { stone: 1 },
 };
 
 class BP {
@@ -311,6 +312,57 @@ function castle() {
   return b.build();
 }
 
+// Стекольный завод: печи плавят песок в стекло (8 стекла на 1 уголь).
+function glassworks() {
+  const b = new BP(9, 7);
+  b.box(0, 0, 0, 8, 0, 6, "stone_bricks");
+  b.walls(0, 0, 8, 6, 1, 4, "stone_bricks", "smooth_stone");
+  b.door(4, 0, 3, 3);
+  for (const x of [1, 7]) b.set(x, 2, 0, "glass");
+  for (const z of [2, 4]) {
+    b.set(0, 2, z, "glass");
+    b.set(8, 2, z, "glass");
+  }
+  b.roof(0, 0, 8, 6, 5, "stone_bricks");
+  for (const x of [1, 2, 3, 5, 6, 7]) b.set(x, 1, 5, x % 2 ? "furnace" : "blast_furnace");
+  b.set(4, 1, 5, "barrel");
+  for (let y = 6; y <= 10; y++) b.set(7, y, 5, "stone_bricks");
+  b.set(1, 1, 1, "torch");
+  b.set(7, 1, 1, "torch");
+  return b.build();
+}
+
+// Небоскрёб 10×10, высота 35 блоков: 7 этажей, фасад наполовину стеклянный.
+function skyscraper() {
+  const n = 10;
+  const H = 35;
+  const b = new BP(n, n);
+  for (let y = 0; y < H; y++) {
+    const f = y % 5;
+    if (f === 0 || y === H - 1) {
+      b.box(0, y, 0, n - 1, y, n - 1, y === 0 ? "stone_bricks" : "smooth_stone");
+      continue;
+    }
+    for (let x = 0; x < n; x++) for (let z = 0; z < n; z++) {
+      if (x !== 0 && z !== 0 && x !== n - 1 && z !== n - 1) continue;
+      const corner = (x === 0 || x === n - 1) && (z === 0 || z === n - 1);
+      b.set(x, y, z, corner || f === 1 ? "stone_bricks" : "glass");
+    }
+  }
+  b.door(5, 0, 1, 2);
+  for (let y = 1; y < H; y++) b.set(1, y, n - 2, "ladder", { facing_direction: 2 });
+  for (let y = 0; y < H - 1; y += 5) {
+    b.set(5, y + 1, 5, "torch");
+    if (y > 0) {
+      b.bed(7, y + 1, 7, 2);
+      b.bed(8, y + 1, 7, 2);
+    }
+  }
+  b.set(2, 1, 2, "chest");
+  b.set(3, 1, 2, "crafting_table");
+  return b.build();
+}
+
 export const TYPES = {
   center: { name: "Центр поселения", gen: center },
   hut: { name: "Хижина", gen: hut },
@@ -325,6 +377,8 @@ export const TYPES = {
   townhall: { name: "Ратуша", gen: townhall },
   barracks: { name: "Казармы", gen: barracks },
   castle: { name: "Замок", gen: castle },
+  glassworks: { name: "Стекольный завод", gen: glassworks },
+  skyscraper: { name: "Небоскрёб", gen: skyscraper },
   quarry: { name: "Карьер", gen: () => new BP(5, 5).build() },
   mine: { name: "Шахта", gen: () => new BP(3, 3).build() },
 };

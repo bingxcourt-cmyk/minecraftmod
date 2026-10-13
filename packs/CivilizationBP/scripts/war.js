@@ -7,6 +7,7 @@ import { abstractBattle } from "./offscreen.js";
 import { splitDebtLoot, cancelDebt, debtOf } from "./credit.js";
 import { has, popOf, count } from "./society.js";
 import { note, warStart, warEnd } from "./journal.js";
+import { takeLand } from "./territory.js";
 
 const WAR_DIST = 170;
 
@@ -24,7 +25,7 @@ function title(civs, text, sub) {
 }
 
 // Названия ресурсов для причин войны.
-const RES_RU = { wood: "дерево", stone: "камень", food: "еду", iron: "железо", coal: "уголь", andesite: "андезит", saplings: "саженцы", diamond: "алмазы", coins: "монеты", torches: "факелы" };
+const RES_RU = { wood: "дерево", stone: "камень", food: "еду", iron: "железо", coal: "уголь", andesite: "андезит", saplings: "саженцы", diamond: "алмазы", coins: "монеты", torches: "факелы", sand: "песок", glass: "стекло", land: "землю" };
 
 export function declareWar(a, b, opts = {}) {
   const reason = opts.reason ?? "соперничество";
@@ -71,6 +72,8 @@ function surrender(loser, winner) {
   const debt = splitDebtLoot(loser, winner);
   if (debt) return makePeace(loser, winner, `${loser.name} сдались; ${debt}`);
   if (winner.war?.reason === "долг") cancelDebt(winner, loser);
+  // Война за территорию: победитель забирает землю — разбирает пограничные постройки и стену.
+  if (winner.war?.res === "land") return makePeace(loser, winner, `${loser.name} сдались; ${takeLand(winner, loser)}`);
   // Обычная война — забирают в первую очередь то, ради чего воевали.
   const want = winner.war?.res;
   const loot = {};
@@ -95,6 +98,8 @@ function surrender(loser, winner) {
  * (нет товара или рынок закрыт), а у соседа этого много; голод; пустая казна у бедных при богатом соседе.
  */
 function motive(a, b) {
+  // Некуда расти: сосед занял землю, на которой можно было бы строиться.
+  if (a.crowdBy === b.id && (a.crowdUntil ?? 0) > S.clock) return { reason: "территория — за землю", res: "land" };
   if (a.starving && (b.res.food ?? 0) > popOf(b) * 4 + 20) return { reason: "голод — за еду", res: "food" };
   for (const k of Object.keys(a.unmet ?? {})) {
     if (k === "saplings") continue;

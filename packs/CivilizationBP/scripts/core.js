@@ -132,6 +132,8 @@ export function saveAll(force = false) {
     world.setDynamicProperty("civ:speed", S.speed);
     world.setDynamicProperty("civ:night", S.nightWork ? "work" : "rest");
     world.setDynamicProperty("civ:radius", S.activeChunks);
+    // Очередь сноса: старые куски стен и захваченные постройки (разбирают, когда чанк загрузится).
+    world.setDynamicProperty("civ:demo", JSON.stringify({ w: (S.wallDemo ?? []).slice(-1000), b: S.demo ?? [] }));
   } catch {}
 }
 
@@ -151,6 +153,11 @@ export function loadAll() {
   S.speed = Number(world.getDynamicProperty("civ:speed") ?? 1) || 1;
   S.nightWork = world.getDynamicProperty("civ:night") !== "rest";
   S.activeChunks = Number(world.getDynamicProperty("civ:radius") ?? 7) || 7;
+  try {
+    const d = JSON.parse(String(world.getDynamicProperty("civ:demo") ?? "{}"));
+    S.wallDemo = d.w ?? [];
+    S.demo = d.b ?? [];
+  } catch {}
 }
 
 export function deleteCiv(civ) {

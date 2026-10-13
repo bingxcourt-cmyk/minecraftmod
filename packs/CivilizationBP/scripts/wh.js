@@ -4,7 +4,7 @@ import { S, getProp, setProp } from "./core.js";
 import { ROLE_NAME } from "./workers.js";
 
 // «ВХ»: подсветка жителей выбранных профессий. Видит только тот игрок, который её включил.
-export const WH_ROLES = ["lumberjack", "miner", "farmer", "hunter", "builder", "soldier", "guard", "settler", "child", "golem"];
+export const WH_ROLES = ["lumberjack", "miner", "farmer", "hunter", "builder", "soldier", "guard", "sander", "settler", "child", "golem"];
 
 const COLOR = {
   lumberjack: { red: 0.2, green: 0.9, blue: 0.2 },
@@ -14,11 +14,12 @@ const COLOR = {
   builder: { red: 0.1, green: 0.9, blue: 1 },
   soldier: { red: 1, green: 0.1, blue: 0.1 },
   guard: { red: 0.6, green: 0, blue: 0 },
+  sander: { red: 0.95, green: 0.85, blue: 0.55 },
   settler: { red: 1, green: 0.3, blue: 1 },
   child: { red: 1, green: 1, blue: 1 },
   golem: { red: 0.7, green: 0.7, blue: 0.7 },
 };
-const CODE = { lumberjack: "§a", miner: "§9", farmer: "§e", hunter: "§6", builder: "§b", soldier: "§c", guard: "§4", settler: "§d", child: "§f", golem: "§7" };
+const CODE = { lumberjack: "§a", miner: "§9", farmer: "§e", hunter: "§6", builder: "§b", soldier: "§c", guard: "§4", sander: "§g", settler: "§d", child: "§f", golem: "§7" };
 
 const ALIASES = {
   lumberjack: "lumberjack", лесоруб: "lumberjack", лесорубы: "lumberjack",
@@ -28,6 +29,7 @@ const ALIASES = {
   builder: "builder", строитель: "builder", строители: "builder",
   soldier: "soldier", воин: "soldier", воины: "soldier",
   guard: "guard", стражник: "guard", стражники: "guard", стража: "guard",
+  sander: "sander", песочник: "sander", песочники: "sander",
   settler: "settler", переселенец: "settler", переселенцы: "settler",
   child: "child", ребенок: "child", ребёнок: "child", дети: "child",
   golem: "golem", страж: "golem", стражи: "golem", голем: "golem", големы: "golem",

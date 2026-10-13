@@ -3,7 +3,7 @@ import { findDrySpot } from "./blocks.js";
 import { setTarget, near } from "./workers.js";
 import { popOf } from "./society.js";
 import { note } from "./journal.js";
-import { insideWall } from "./walls.js";
+import { insideWall, wallRadius, wallShare, wallPaidShare } from "./walls.js";
 
 // Бандиты — разбойники и поборники Minecraft. Нападают на поселения, ломают стену (минуту),
 // грабят склад, если доберутся до центра. Стражники с ополчением и лучники на стене отбиваются.
@@ -20,8 +20,7 @@ export function raidTick(civ) {
   const dim = DIM();
   const a = Math.random() * Math.PI * 2;
   // Появляются за стеной (если она есть) и не ближе 40 блоков от центра.
-  const w = civ.wall;
-  const r = w ? Math.hypot(w.x2 - w.x1, w.z2 - w.z1) / 2 : 0;
+  const r = wallRadius(civ);
   const d = Math.max(rnd(40, 55), r + 15);
   const spot = findDrySpot(dim, civ.center.x + Math.cos(a) * d, civ.center.z + Math.sin(a) * d, 8);
   if (!spot || insideWall(civ, spot.x, spot.z)) return;
@@ -104,8 +103,8 @@ export function raidCheck(civ) {
 export function raidOffscreen(civ, off, k) {
   if (civ.era < 1 || popOf(civ) < 6) return;
   if (Math.random() > k / 35) return; // в среднем раз в 35 минут
-  const share = civ.wall ? (civ.wall.done.split("1").length - 1) / civ.wall.n : 0;
-  const prog = civ.wall ? civ.wall.prog / civ.wall.n : 0;
+  const share = wallShare(civ);
+  const prog = wallPaidShare(civ);
   const defense = Math.max(share, prog) * 0.7 + Math.min(0.3, popOf(civ) / 100);
   if (Math.random() < defense) {
     note("events", `${civ.name}: набег бандитов отбит (без вас)`);

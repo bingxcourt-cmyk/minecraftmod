@@ -4,14 +4,17 @@ import { ERAS, popOf, missingQueue } from "./society.js";
 import { remainingCost, foodCap } from "./workers.js";
 import { note } from "./journal.js";
 import { wallLeft, WALL_STONE } from "./walls.js";
+import { glassGoal } from "./industry.js";
+import { has } from "./society.js";
 
 // Общий рынок с «торговым домом»: поселения продают ему излишки и покупают то, чего не хватает.
 // Цена каждого товара зависит от запаса на рынке: товара мало — дорого, много — дёшево.
-// price = БАЗА × (ЦЕЛЕВОЙ_ЗАПАС / (запас + 1))^0.6, но не дешевле БАЗА/4 и не дороже БАЗА×5.
-export const BASE = { wood: 1, stone: 1, andesite: 1.5, food: 2, coal: 4, saplings: 6, iron: 64, diamond: 512 };
-const TARGET = { wood: 600, stone: 600, andesite: 300, food: 300, coal: 120, saplings: 30, iron: 30, diamond: 4 };
-const CAP = { wood: 200, stone: 200, andesite: 120, food: 80, coal: 20, saplings: 10, iron: 10, diamond: 2 };
-export const GOOD_NAME = { wood: "дерево", stone: "камень", andesite: "андезит", food: "еда", coal: "уголь", saplings: "саженцы", iron: "железо", diamond: "алмазы" };
+// price = БАЗА × (ЦЕЛЕВОЙ_ЗАПАС / (запас + 1))^0.6 — нижнего предела нет (рынок есть рынок),
+// сверху цена ограничена БАЗА×5, чтобы редкий товар не стал совсем недоступным.
+export const BASE = { wood: 1, stone: 1, andesite: 1.5, food: 2, coal: 4, saplings: 6, sand: 1.5, glass: 4, iron: 64, diamond: 512 };
+const TARGET = { wood: 600, stone: 600, andesite: 300, food: 300, coal: 120, saplings: 30, sand: 400, glass: 300, iron: 30, diamond: 4 };
+const CAP = { wood: 200, stone: 200, andesite: 120, food: 80, coal: 20, saplings: 10, sand: 128, glass: 160, iron: 10, diamond: 2 };
+export const GOOD_NAME = { wood: "дерево", stone: "камень", andesite: "андезит", food: "еда", coal: "уголь", saplings: "саженцы", sand: "песок", glass: "стекло", iron: "железо", diamond: "алмазы" };
 const BID = 0.8; // рынок покупает дешевле, чем продаёт (его доля)
 
 export function loadMarket() {
@@ -19,6 +22,8 @@ export function loadMarket() {
     S.market = JSON.parse(String(world.getDynamicProperty("civ:market") ?? "null"));
   } catch {}
   if (!S.market) S.market = { stock: Object.fromEntries(Object.keys(TARGET).map((k) => [k, Math.round(TARGET[k] / 2)])), prev: {} };
+  // Новые товары (песок, стекло) в старом сохранении.
+  for (const k of Object.keys(TARGET)) if (S.market.stock[k] === undefined) S.market.stock[k] = Math.round(TARGET[k] / 2);
 }
 
 export function saveMarket() {
@@ -30,14 +35,14 @@ export function saveMarket() {
 export function price(k) {
   const st = S.market.stock[k] ?? 0;
   const p = BASE[k] * Math.pow(TARGET[k] / (st + 1), 0.6);
-  return Math.max(BASE[k] / 4, Math.min(BASE[k] * 5, p));
+  return Math.min(BASE[k] * 5, p);
 }
 
 /** Чего поселению реально не хватает прямо сейчас (а не «на всякий случай»). */
 function needsOf(civ) {
   const need = {};
   const rc = remainingCost(civ);
-  const map = { дерево: "wood", камень: "stone", железо: "iron", еда: "food" };
+  const map = { дерево: "wood", камень: "stone", железо: "iron", еда: "food", стекло: "glass", песок: "sand" };
   // Стройка встала из-за ресурса.
   const w = map[civ.waiting];
   if (w) need[w] = Math.max(1, rc[w] - (civ.res[w] ?? 0));
@@ -57,6 +62,14 @@ function needsOf(civ) {
   // Есть места под факелы и фонари, а факелов нет — нужен уголь (1 уголь = 4 факела).
   const lights = civ.lights?.length ?? 0;
   if (lights > (civ.res.torches ?? 0) && !(civ.res.coal > 0)) need.coal = Math.ceil((lights - (civ.res.torches ?? 0)) / 4);
+  // Индустриализация: стекло на небоскрёб. Есть завод, но нет песка рядом — покупают песок
+  // (он дешевле), иначе сразу стекло; для плавки нужен уголь.
+  const gShort = glassGoal(civ) - (civ.res.glass ?? 0);
+  if (gShort > 0 && !need.glass) {
+    if (has(civ, "glassworks") && !civ.sandAt) need.sand = Math.max(0, gShort - (civ.res.sand ?? 0));
+    else if (!has(civ, "glassworks")) need.glass = gShort;
+  }
+  if (has(civ, "glassworks") && (civ.res.sand ?? 0) > 0 && !(civ.res.coal > 0)) need.coal = Math.max(need.coal ?? 0, Math.ceil(civ.res.sand / 8));
   // Нет леса — нужны саженцы.
   if (civ.needSaplings) need.saplings = Math.max(0, 8 - (civ.res.saplings ?? 0));
   for (const k in need) need[k] = Math.min(CAP[k], Math.ceil(need[k]));
@@ -78,6 +91,8 @@ function spareOf(civ) {
     andesite: civ.era >= 1 ? 60 : 0,
     coal: Math.ceil((civ.lights?.length ?? 0) / 4) + 4,
     iron: Math.max(rc.iron, next.iron ?? 0) + 8,
+    glass: glassGoal(civ),
+    sand: has(civ, "glassworks") ? 1e9 : 0, // песок с заводом идёт в плавку
     diamond: 0,
   };
   const spare = {};
@@ -94,6 +109,7 @@ function log(civ, text) {
 function sell(civ, k, qty) {
   if (qty <= 0) return 0;
   const got = Math.floor(price(k) * BID * qty);
+  if (got <= 0) return 0; // за бесценок не продают
   civ.res[k] -= qty;
   civ.coins = (civ.coins ?? 0) + got;
   S.market.stock[k] = (S.market.stock[k] ?? 0) + qty;
@@ -168,7 +184,7 @@ export function marketTick() {
       }
     }
     // Склады ломятся — продают часть излишков (кроме камня, нужного на стену).
-    for (const k of ["wood", "stone", "andesite", "food"]) {
+    for (const k of ["wood", "stone", "andesite", "food", "sand", "glass"]) {
       if (k === "stone" && wallLeft(civ) > 0) continue;
       if (spare[k] > 400) {
         const q = Math.min(CAP[k], Math.floor(spare[k] / 6));
@@ -185,7 +201,7 @@ export function marketTick() {
   }
   // Рынок понемногу сам пополняется/расходует запасы (торговцы со стороны) — цены не застывают.
   for (const k of Object.keys(TARGET)) {
-    const st = S.market.stock[k] ?? 0;
+    const st = Number.isFinite(S.market.stock[k]) ? S.market.stock[k] : TARGET[k] / 2;
     S.market.stock[k] = st + (TARGET[k] / 2 - st) * 0.06;
   }
   saveMarket();
@@ -211,7 +227,7 @@ export function marketText() {
     const p = price(k);
     const prev = S.market.prev?.[k] ?? p;
     const arrow = p > prev * 1.01 ? "§cдорожает" : p < prev * 0.99 ? "§aдешевеет" : "";
-    lines.push(`${GOOD_NAME[k]}: §e${p < 10 ? p.toFixed(1) : Math.round(p)}§r ${arrow}§r  §8(на рынке ${Math.floor(S.market.stock[k] ?? 0)})`);
+    lines.push(`${GOOD_NAME[k]}: §e${p < 1 ? p.toFixed(2) : p < 10 ? p.toFixed(1) : Math.round(p)}§r ${arrow}§r  §8(на рынке ${Math.floor(S.market.stock[k] ?? 0)})`);
   }
   lines.push("", "§lКазна поселений:§r");
   for (const c of S.civs.values()) lines.push(`${c.color}${c.name}§r: ${Math.floor(c.coins ?? 0)} мон.`);

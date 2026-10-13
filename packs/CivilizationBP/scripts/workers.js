@@ -11,10 +11,11 @@ import { guardThink, armorOf, ARMOR_NAME } from "./defense.js";
 import { ERAS } from "./society.js";
 import { TOOL_FOR, TIERS, toolLabel, craftNeed, craft, useTool } from "./tools.js";
 import { note } from "./journal.js";
+import { sanderThink } from "./industry.js";
 
 export const ROLE_NAME = {
   lumberjack: "Лесоруб", miner: "Шахтёр", farmer: "Фермер", hunter: "Охотник", builder: "Строитель",
-  soldier: "Воин", guard: "Стражник", raider: "Бандит", settler: "Переселенец", child: "Ребёнок", golem: "Страж", "": "Житель",
+  soldier: "Воин", guard: "Стражник", sander: "Песочник", raider: "Бандит", settler: "Переселенец", child: "Ребёнок", golem: "Страж", "": "Житель",
 };
 
 // ---------- Мозг жителя ----------
@@ -593,7 +594,7 @@ export function projectOps(civ) {
 /** Сколько ресурсов ещё нужно, чтобы достроить текущую постройку. */
 export function remainingCost(civ) {
   const p = civ.project;
-  const need = { wood: 0, stone: 0, iron: 0, food: 0 };
+  const need = { wood: 0, stone: 0, iron: 0, food: 0, glass: 0 };
   if (!p || p.paid) return need;
   // Пересчёт дорогой (тысячи блоков) — запоминаем, пока стройка не продвинулась.
   const key = `${p.t}:${p.x},${p.z},${p.r}:${p.step}`;
@@ -601,13 +602,13 @@ export function remainingCost(civ) {
   const ops = projectOps(civ);
   for (let i = p.step; i < ops.length; i++) {
     const c = ops[i].cost;
-    if (c) for (const k in c) need[k] += c[k];
+    if (c) for (const k in c) need[k] = (need[k] ?? 0) + c[k];
   }
   civ._rc = { key, need: { ...need } };
   return need;
 }
 
-const RES_NAME = { wood: "дерево", stone: "камень", iron: "железо", food: "еда" };
+export const RES_NAME = { wood: "дерево", stone: "камень", iron: "железо", food: "еда", glass: "стекло", sand: "песок" };
 
 function canPay(civ, cost) {
   for (const k in cost) if ((civ.res[k] ?? 0) < cost[k]) return k;
@@ -821,6 +822,7 @@ export function think(civ, ent, brain, tick, hooks) {
     case "guard": return guardThink(civ, ent, brain, tick);
     case "raider": return hooks.raider(civ, ent, brain, tick);
     case "settler": return hooks.settler(civ, ent, brain, tick);
+    case "sander": return sanderThink(civ, ent, brain, tick);
     case "child": return wander(civ, brain, 6);
     default: return wander(civ, brain, 8);
   }

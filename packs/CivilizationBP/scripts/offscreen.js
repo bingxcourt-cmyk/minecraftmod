@@ -3,12 +3,14 @@ import { TIERS, TOOL_FOR, toolTier, bestCraftable } from "./tools.js";
 import { TYPES, getBP } from "./blueprints.js";
 import { MAX_POP, popOf, housingOf, chooseNext, count, has, join, eraTick, noteBuilt, newCiv, MAX_CIVS, MAX_COLONIES } from "./society.js";
 import { findDrySpot } from "./blocks.js";
-import { brainOf, foodCap, remainingCost } from "./workers.js";
+import { brainOf, foodCap, remainingCost, RES_NAME } from "./workers.js";
+import { glassShort, smeltTick } from "./industry.js";
 import { findSafeSpot } from "./nav.js";
 import { craftTorches } from "./lights.js";
 import { raidOffscreen } from "./bandits.js";
 import { planWall } from "./walls.js";
 import { note, warLog } from "./journal.js";
+import { colonySiteFree } from "./territory.js";
 
 // Поселение «живое», если рядом есть игрок (в пределах симуляции) и чанк центра загружен.
 // Дальше — фоновая симуляция по формулам, а результат появляется, когда игрок вернётся.
@@ -36,7 +38,7 @@ export const RATE = {
 
 /** Профессии в фоне — по тем же правилам, что и вживую, но от текущего населения. */
 function rolesFor(civ, n) {
-  const r = { soldier: 0, builder: 0, farmer: 0, hunter: 0, miner: 0, lumberjack: 0 };
+  const r = { soldier: 0, builder: 0, farmer: 0, hunter: 0, miner: 0, sander: 0, lumberjack: 0 };
   let left = n;
   const give = (role, k) => {
     const g = Math.max(0, Math.min(k, left));
@@ -52,6 +54,8 @@ function rolesFor(civ, n) {
   give("lumberjack", 1);
   if (n >= 3) give("miner", n >= 8 ? 2 : 1);
   if (civ.era >= 2 && n >= 12) give("miner", 1);
+  // Песок — только если песочники уже нашли его у поселения (иначе стекло покупают).
+  if (civ.sandAt && glassShort(civ) > 0) give("sander", n >= 14 ? 2 : 1);
   // Дерева с избытком — лишние руки в шахту и на поля (как вживую).
   if (civ.res.wood > 250) {
     give("miner", Math.min(3, Math.ceil(left / 2)));
@@ -97,11 +101,13 @@ function gain(civ, off, k, v) {
 
 const totalCost = (type) => {
   const c = { wood: 0, stone: 0, iron: 0, food: 0 };
-  for (const op of getBP(type).ops) for (const k in op.cost ?? {}) c[k] += op.cost[k];
+  for (const op of getBP(type).ops) for (const k in op.cost ?? {}) c[k] = (c[k] ?? 0) + op.cost[k];
   return c;
 };
+// Чего не хватает на постройку — рынок купит это для поселения и вдали от игрока.
+const shortOf = (civ, c) => Object.keys(c).find((k) => (civ.res[k] ?? 0) < c[k]);
 const affordable = (civ, c) => Object.entries(c).every(([k, v]) => (civ.res[k] ?? 0) >= v);
-const pay = (civ, c) => Object.entries(c).forEach(([k, v]) => (civ.res[k] -= v));
+const pay = (civ, c) => Object.entries(c).forEach(([k, v]) => (civ.res[k] = (civ.res[k] ?? 0) - v));
 
 /** Фоновая симуляция поселения за dt секунд. */
 export function offscreenTick(civ, dt) {
@@ -129,6 +135,9 @@ export function offscreenTick(civ, dt) {
   gain(civ, off, "coal", blocks * 0.015);
   if ((T.miner ?? 0) >= 2) gain(civ, off, "iron", blocks * 0.008); // железо — с каменной кирки
   if ((T.miner ?? 0) >= 3) gain(civ, off, "diamond", blocks * 0.0006); // алмазы — с железной
+  // Песок копают руками (лопат у жителей нет): ~40 блоков в минуту.
+  gain(civ, off, "sand", (R.sander ?? 0) * 40 * RATE.eff * k);
+  smeltTick(civ, k);
 
   // Еда и голод.
   const farms = count(civ, (b) => b.t.startsWith("farm")) + (civ.offQueue ?? []).filter((q) => q.t.startsWith("farm")).length;
@@ -191,7 +200,9 @@ export function offscreenTick(civ, dt) {
   if (p && !p.paid) {
     const ops = remainingCost(civ);
     const left = getBP(p.t).ops.length;
-    if (off.build >= left && affordable(civ, ops)) {
+    const miss = shortOf(civ, ops);
+    civ.waiting = miss ? RES_NAME[miss] ?? miss : "";
+    if (off.build >= left && !miss) {
       pay(civ, ops);
       off.build -= left;
       // Место уже выбрано — блоки поставят, когда игрок придёт.
@@ -205,7 +216,9 @@ export function offscreenTick(civ, dt) {
     if (next) {
       const cost = totalCost(next.t);
       const n = getBP(next.t).ops.length;
-      if (off.build >= n && affordable(civ, cost)) {
+      const miss = shortOf(civ, cost);
+      civ.waiting = miss ? RES_NAME[miss] ?? miss : "";
+      if (off.build >= n && !miss) {
         pay(civ, cost);
         off.build -= n;
         civ.offQueue.push({ t: next.t });
@@ -233,34 +246,47 @@ function colonyOffscreen(civ, pop) {
   civ.colonyAt = S.clock + Math.round(1500 / S.speed);
   if (S.civs.size >= MAX_CIVS) return;
   let dest;
-  for (let i = 0; i < 12 && !dest; i++) {
+  for (let i = 0; i < 16 && !dest; i++) {
     const a = Math.random() * Math.PI * 2;
-    const d = 70 + Math.random() * 30;
+    const d = 130 + Math.random() * 40;
     const p = { x: Math.floor(civ.center.x + Math.cos(a) * d), y: civ.center.y, z: Math.floor(civ.center.z + Math.sin(a) * d) };
-    if ([...S.civs.values()].some((c) => Math.hypot(c.center.x - p.x, c.center.z - p.z) < 60)) continue;
+    // Подальше от чужих земель: стены поселений должны быть минимум в 50 блоках друг от друга.
+    if (!colonySiteFree(p)) continue;
     // Колонию не основывают прямо рядом с игроком — там её бы увидели «из ниоткуда».
     if (playersNear(p, activeR() + 16).length) continue;
     dest = p;
   }
   if (!dest) return;
-  const colony = newCiv(dest, civ.id);
+  civ.coloniesFounded = (civ.coloniesFounded ?? 0) + 1;
+  virtualColony(civ, dest, 4, true);
+}
+
+/**
+ * Колония, основанная вдали от игрока: живёт по формулам, рельеф уточнится, когда чанк загрузится.
+ * offscreen — переселенцы «списываются» из фоновой переписи (вживую их сущности убирают отдельно).
+ */
+export function virtualColony(civ, dest, n, offscreen) {
+  const colony = newCiv({ x: dest.x, y: dest.y ?? civ.center.y, z: dest.z }, civ.id);
   colony._active = false;
   colony.virtualCenter = true;
-  colony.census = { pop: 4, roles: {}, tiers: { ...(civ.census?.tiers ?? {}) } };
+  colony.census = { pop: n, roles: {}, tiers: { ...(civ.census?.tiers ?? {}) } };
   offOf(colony);
   const give = { wood: Math.min(60, civ.res.wood), stone: Math.min(25, civ.res.stone), food: Math.min(40, civ.res.food), saplings: Math.min(4, civ.res.saplings ?? 0) };
-  for (const k in give) civ.res[k] -= give[k];
+  for (const k in give) civ.res[k] = (civ.res[k] ?? 0) - give[k];
   colony.res = { ...give, iron: 0 };
   const coins = Math.min(40, civ.coins ?? 0);
   civ.coins = (civ.coins ?? 0) - coins;
   colony.coins = coins;
-  offOf(civ).pop -= 4;
-  civ.coloniesFounded = (civ.coloniesFounded ?? 0) + 1;
-  offOf(civ).colonies = (offOf(civ).colonies ?? 0) + 1;
+  if (offscreen) {
+    offOf(civ).pop -= n;
+    offOf(civ).colonies = (offOf(civ).colonies ?? 0) + 1;
+  }
   civ.tension[colony.id] = 35;
   colony.tension[civ.id] = 35;
   markDirty(colony);
+  markDirty(civ);
   note("events", `Переселенцы из ${civ.name} основали колонию ${colony.name} (координаты ${dest.x}, ${dest.z})`);
+  return colony;
 }
 
 // Центр колонии, основанной вдали, ставим на настоящую сушу, когда чанк загрузился.
