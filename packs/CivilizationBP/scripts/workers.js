@@ -5,6 +5,7 @@ import { makeOps, cropCells, dims } from "./blueprints.js";
 import { findPath, findSafeSpot, rescueIfStuck } from "./nav.js";
 import { minerThink } from "./mine.js";
 import { heldIndex } from "./held.js";
+import { isLight, deferLight } from "./lights.js";
 import { guardThink } from "./defense.js";
 import { ERAS } from "./society.js";
 import { TOOL_FOR, TIERS, toolLabel, craftNeed, craft, useTool } from "./tools.js";
@@ -658,6 +659,8 @@ export function fastBuild(civ, maxOps) {
         if (!b.isAir && !isProtected(b.typeId)) b.setType("minecraft:air");
       } else if (op.k === "f") {
         if (b.isAir || b.isLiquid || isPassableId(b.typeId)) b.setType("minecraft:dirt");
+      } else if (isLight(op.id)) {
+        if (b.typeId !== op.id) deferLight(civ, op.x, op.y, op.z, op.id);
       } else if (!(b.typeId === op.id && !op.pair)) placeOp(dim, op);
     } catch {}
     p.step++;
@@ -703,6 +706,12 @@ export function buildStep(civ) {
       continue;
     }
     if (id === op.id && !op.pair) {
+      p.step++;
+      continue;
+    }
+    if (isLight(op.id)) {
+      // Факелы ставят отдельно, когда будут факелы из угля.
+      deferLight(civ, op.x, op.y, op.z, op.id);
       p.step++;
       continue;
     }

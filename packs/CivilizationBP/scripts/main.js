@@ -15,6 +15,7 @@ import { isActive, offscreenTick, materialize, takeCensus } from "./offscreen.js
 import { whTick } from "./wh.js";
 import { heldTick, heldCleanup, dropHeld } from "./held.js";
 import { scanThreats } from "./defense.js";
+import { lightsTick } from "./lights.js";
 
 const hooks = { onComplete: completeProject, soldier: soldierThink, settler: settlerThink };
 const ALWAYS_AWAKE = new Set(["soldier", "golem", "settler", "guard"]);
@@ -78,6 +79,8 @@ function everySecond() {
       const wasActive = civ._active;
       civ._active = isActive(civ);
       if (collapseCheck(civ)) continue;
+      // Факелы и фонари расставляются везде, где чанки загружены (и вблизи, и в зоне прорисовки).
+      lightsTick(civ);
       if (!civ._active) {
         // Далеко от игрока — фоновая симуляция раз в 10 секунд.
         civ._activeFor = 0;

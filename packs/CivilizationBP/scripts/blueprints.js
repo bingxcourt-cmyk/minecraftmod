@@ -5,13 +5,13 @@
 const COST = {
   oak_planks: { wood: 1 }, spruce_planks: { wood: 1 }, dark_oak_planks: { wood: 1 }, birch_planks: { wood: 1 },
   oak_log: { wood: 2 }, spruce_log: { wood: 2 }, dark_oak_log: { wood: 2 },
-  oak_fence: { wood: 1 }, spruce_fence: { wood: 1 }, ladder: { wood: 1 }, torch: { wood: 1 },
+  oak_fence: { wood: 1 }, spruce_fence: { wood: 1 }, ladder: { wood: 1 }, torch: {},
   bed: { wood: 3 }, chest: { wood: 2 }, barrel: { wood: 2 }, crafting_table: { wood: 2 }, composter: { wood: 2 },
   lectern: { wood: 4 }, cartography_table: { wood: 4 }, bookshelf: { wood: 3 },
   cobblestone: { stone: 1 }, stone_bricks: { stone: 1 }, mossy_stone_bricks: { stone: 1 },
   cobblestone_wall: { stone: 1 }, glass_pane: { stone: 1 }, furnace: { stone: 4 },
   smithing_table: { wood: 2, iron: 1 }, blast_furnace: { stone: 5, iron: 1 }, anvil: { iron: 5 },
-  bell: { iron: 1 }, lantern: { iron: 1 }, iron_bars: { iron: 1 },
+  bell: { iron: 1 }, lantern: {}, iron_bars: { iron: 1 },
   hay_block: { food: 2 },
 };
 

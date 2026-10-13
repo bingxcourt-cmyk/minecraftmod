@@ -3,6 +3,7 @@ import { S, DIM, getB, loaded, markDirty, playersNear, dXZ } from "./core.js";
 import { groundAt, isPassableId, findDrySpot } from "./blocks.js";
 import { remainingCost } from "./workers.js";
 import { findSafeSpot } from "./nav.js";
+import { deferLight } from "./lights.js";
 
 // ---------- Дороги между поселениями ----------
 // С эпохи «Деревня» поселение прокладывает дорогу к ближайшему соседу и к своей метрополии.
@@ -79,7 +80,9 @@ export function planRoads() {
 // Дорога шириной 3: по центру каменный кирпич, по краям полированный андезит, по бокам заборы
 // (с проходами каждые 16 блоков), фонари на столбах каждые 12 блоков, через воду — мост с перилами.
 const ROAD_SPEED = 0.25; // блоков дороги в секунду с каждой стороны
-const ROAD_COST = { stone: 3, wood: 2 }; // за 1 блок длины: камень на покрытие, дерево на заборы
+// За 1 блок длины: каменный кирпич по центру (из камня), полированный андезит по краям, два забора из дерева.
+const ROAD_COST = { stone: 1, andesite: 2, wood: 2 };
+const RES_RU = { stone: "камень", andesite: "андезит", wood: "дерево" };
 
 const SOFT_ABOVE = (b) => {
   const id = b.typeId;
@@ -138,7 +141,9 @@ function layRoadPoint(dim, r, i) {
       const p3 = getB(dim, cx, g.y + 3, cz);
       if (p2?.isAir && p3?.isAir) {
         setIf(p2, "minecraft:oak_fence");
-        setIf(p3, "minecraft:lantern");
+        // Фонарь повесит то поселение, чья это половина дороги, — когда будут факелы и железо.
+        const owner = S.civs.get(i <= n / 2 ? r.a : r.b);
+        if (owner) deferLight(owner, cx, g.y + 3, cz, "minecraft:lantern");
       }
     }
   }
@@ -151,11 +156,23 @@ function layRoadPoint(dim, r, i) {
 function payRoad(civ) {
   if (!civ) return false;
   const rc = remainingCost(civ);
-  for (const [k, v] of Object.entries(ROAD_COST)) if ((civ.res[k] ?? 0) - v < (rc[k] ?? 0) + 30) return false;
+  for (const [k, v] of Object.entries(ROAD_COST)) {
+    if ((civ.res[k] ?? 0) - v < (rc[k] ?? 0) + (k === "andesite" ? 0 : 30)) {
+      // Не хватает — купят на рынке (андезит, камень, дерево).
+      if (civ.roadNeed !== k) {
+        civ.roadNeed = k;
+        markDirty(civ);
+      }
+      return false;
+    }
+  }
   for (const [k, v] of Object.entries(ROAD_COST)) civ.res[k] -= v;
+  civ.roadNeed = null;
   markDirty(civ);
   return true;
 }
+
+export const roadNeedName = (civ) => (civ.roadNeed ? RES_RU[civ.roadNeed] : "");
 
 /** Рост прогресса дорог за dt секунд (вживую, в фоне и при «догонялках» за время вне игры). */
 export function progressRoads(dt) {
@@ -166,8 +183,10 @@ export function progressRoads(dt) {
     if (!a || !b || (a.war && a.war.enemy === r.b)) continue;
     for (const [civ, key] of [[a, "pa"], [b, "pb"]]) {
       if (civ.era < 1 && !civ.parent) continue;
+      // Каждое поселение строит ровно свою половину — до середины.
+      const half = key === "pa" ? Math.ceil((n + 1) / 2) : n + 1 - Math.ceil((n + 1) / 2);
       let left = ROAD_SPEED * S.speed * dt;
-      while (left > 0 && (r[key] ?? 0) < n + 1 - (key === "pa" ? r.pb ?? 0 : r.pa ?? 0)) {
+      while (left > 0 && (r[key] ?? 0) < half) {
         const step = Math.min(1, left);
         const before = Math.floor(r[key] ?? 0);
         const after = Math.floor((r[key] ?? 0) + step);
@@ -218,12 +237,15 @@ export function layRoads() {
 export function roadInfo(civ) {
   const list = (S.roads ?? []).filter((r) => r.a === civ.id || r.b === civ.id);
   if (!list.length) return civ.era < 1 ? "с эпохи «Деревня»" : "пока нет";
-  return list
+  const wait = civ.roadNeed ? ` §c(нужен ${RES_RU[civ.roadNeed]})§r` : "";
+  return wait + list
     .map((r) => {
       const o = S.civs.get(r.a === civ.id ? r.b : r.a);
       const n = r.done.length;
-      const pct = Math.min(100, Math.round((((r.pa ?? 0) + (r.pb ?? 0)) / n) * 100));
-      return `к ${o?.name ?? "?"} — ${pct}%`;
+      const mine = r.a === civ.id ? r.pa ?? 0 : r.pb ?? 0;
+      const half = r.a === civ.id ? Math.ceil(n / 2) : n - Math.ceil(n / 2);
+      const total = Math.min(100, Math.round((((r.pa ?? 0) + (r.pb ?? 0)) / n) * 100));
+      return `к ${o?.name ?? "?"} — всего ${total}%, своя половина ${Math.min(100, Math.round((mine / Math.max(1, half)) * 100))}%`;
     })
     .join(", ");
 }

@@ -2,6 +2,7 @@ import { DIM, getB, markDirty, sound, particle, cdTicks } from "./core.js";
 import { canPass, isStoneLike, isIronOre, isProtected, isLog, strip } from "./blocks.js";
 import { setTarget, near, updateTag, wander } from "./workers.js";
 import { useTool } from "./tools.js";
+import { deferLight } from "./lights.js";
 
 // Шахта как у игрока: лестница вниз шириной в 1 блок пролётами по FLIGHT ступенек
 // с поворотом на площадке (квадратная винтовая лестница, не уходит далеко от деревни),
@@ -124,11 +125,16 @@ function walkTo(m, plan, ent, brain, stand) {
 
 const MANMADE = /planks|brick|glass|wool|concrete|door|fence|torch|rail|chest|slab|stairs|furnace|table|bed|carpet|lamp|glowstone|barrel|ladder|lantern|bookshelf|web|spawner|_wall|hay|glazed|polished|sign|banner/;
 const isOre = (id) => strip(id).endsWith("_ore");
+const isCoalOre = (id) => id === "minecraft:coal_ore" || id === "minecraft:deepslate_coal_ore";
 const isDiamondOre = (id) => id === "minecraft:diamond_ore" || id === "minecraft:deepslate_diamond_ore";
 
 function yieldOf(civ, id, tier, deep) {
   // Как у Стива: железо — каменной киркой и лучше, алмазы — железной и лучше.
-  if (isIronOre(id)) {
+  if (isCoalOre(id)) {
+    civ.res.coal = (civ.res.coal ?? 0) + 1;
+  } else if (id === "minecraft:andesite") {
+    civ.res.andesite = (civ.res.andesite ?? 0) + 1;
+  } else if (isIronOre(id)) {
     if (tier >= 2) civ.res.iron += 1;
   } else if (isDiamondOre(id)) {
     if (tier >= 3) civ.res.diamond = (civ.res.diamond ?? 0) + 1;
@@ -250,15 +256,8 @@ export function minerThink(civ, ent, brain, tick) {
       floor.setType("minecraft:cobblestone");
     } catch {}
   }
-  if (m.idx % 6 === 5 && civ.res.wood >= 1) {
-    const spot = getB(dim, cell.x, cell.y, cell.z);
-    if (spot?.isAir) {
-      try {
-        spot.setType("minecraft:torch");
-        civ.res.wood -= 1;
-      } catch {}
-    }
-  }
+  // Факел каждые 6 шагов — когда будут факелы (из угля).
+  if (m.idx % 6 === 5) deferLight(civ, cell.x, cell.y, cell.z, "minecraft:torch");
   m.idx++;
   markDirty(civ);
   brain.cd = tick + cdTicks(4, brain);

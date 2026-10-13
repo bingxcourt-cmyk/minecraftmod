@@ -6,6 +6,7 @@ import { MAX_POP, popOf, housingOf, chooseNext, count, has, join, eraTick, noteB
 import { findDrySpot } from "./blocks.js";
 import { brainOf, foodCap, remainingCost } from "./workers.js";
 import { findSafeSpot } from "./nav.js";
+import { craftTorches } from "./lights.js";
 
 // Поселение «живое», если рядом есть игрок (в пределах симуляции) и чанк центра загружен.
 // Дальше — фоновая симуляция по формулам, а результат появляется, когда игрок вернётся.
@@ -86,7 +87,7 @@ function gain(civ, off, k, v) {
   off.frac[k] = t - whole;
   if (whole <= 0) return;
   // В фоне склады не бездонные: лишнее не копится.
-  const cap = k === "iron" || k === "diamond" ? 60 + 40 * civ.era : 400 + 300 * civ.era;
+  const cap = k === "iron" || k === "diamond" || k === "coal" ? 60 + 40 * civ.era : 400 + 300 * civ.era;
   const add = Math.max(0, Math.min(whole, cap - (civ.res[k] ?? 0)));
   civ.res[k] = (civ.res[k] ?? 0) + add;
   off.got[k] = (off.got[k] ?? 0) + add;
@@ -120,7 +121,10 @@ export function offscreenTick(civ, dt) {
   gain(civ, off, "wood", wood);
   if ((civ.res.saplings ?? 0) < 64) gain(civ, off, "saplings", wood / 30); // примерно 1 саженец с двух деревьев
   const blocks = (R.miner ?? 0) * RATE.blocks(mult("miner")) * RATE.eff * k;
-  gain(civ, off, "stone", blocks);
+  // В камне попадаются андезит и уголь — их откладывают отдельно.
+  gain(civ, off, "stone", blocks * 0.85);
+  gain(civ, off, "andesite", blocks * 0.1);
+  gain(civ, off, "coal", blocks * 0.015);
   if ((T.miner ?? 0) >= 2) gain(civ, off, "iron", blocks * 0.008); // железо — с каменной кирки
   if ((T.miner ?? 0) >= 3) gain(civ, off, "diamond", blocks * 0.0006); // алмазы — с железной
 
@@ -209,6 +213,7 @@ export function offscreenTick(civ, dt) {
       }
     }
   }
+  craftTorches(civ);
   eraTick(civ);
   colonyOffscreen(civ, pop);
   markDirty(civ);

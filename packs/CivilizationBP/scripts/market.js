@@ -6,10 +6,10 @@ import { remainingCost, foodCap } from "./workers.js";
 // Общий рынок с «торговым домом»: поселения продают ему излишки и покупают то, чего не хватает.
 // Цена каждого товара зависит от запаса на рынке: товара мало — дорого, много — дёшево.
 // price = БАЗА × (ЦЕЛЕВОЙ_ЗАПАС / (запас + 1))^0.6, но не дешевле БАЗА/4 и не дороже БАЗА×5.
-export const BASE = { wood: 1, stone: 1, food: 2, saplings: 6, iron: 64, diamond: 512 };
-const TARGET = { wood: 600, stone: 600, food: 300, saplings: 30, iron: 30, diamond: 4 };
-const CAP = { wood: 200, stone: 200, food: 80, saplings: 10, iron: 10, diamond: 2 };
-export const GOOD_NAME = { wood: "дерево", stone: "камень", food: "еда", saplings: "саженцы", iron: "железо", diamond: "алмазы" };
+export const BASE = { wood: 1, stone: 1, andesite: 1.5, food: 2, coal: 4, saplings: 6, iron: 64, diamond: 512 };
+const TARGET = { wood: 600, stone: 600, andesite: 300, food: 300, coal: 120, saplings: 30, iron: 30, diamond: 4 };
+const CAP = { wood: 200, stone: 200, andesite: 120, food: 80, coal: 20, saplings: 10, iron: 10, diamond: 2 };
+export const GOOD_NAME = { wood: "дерево", stone: "камень", andesite: "андезит", food: "еда", coal: "уголь", saplings: "саженцы", iron: "железо", diamond: "алмазы" };
 const BID = 0.8; // рынок покупает дешевле, чем продаёт (его доля)
 
 export function loadMarket() {
@@ -50,6 +50,11 @@ function needsOf(civ) {
   // Голод.
   const pop = popOf(civ);
   if (civ.res.food < pop * 2) need.food = Math.min(foodCap(civ) - civ.res.food, pop * 4 - civ.res.food);
+  // Дорога встала из-за материала.
+  if (civ.roadNeed) need[civ.roadNeed] = Math.max(need[civ.roadNeed] ?? 0, 40);
+  // Есть места под факелы и фонари, а факелов нет — нужен уголь (1 уголь = 4 факела).
+  const lights = civ.lights?.length ?? 0;
+  if (lights > (civ.res.torches ?? 0) && !(civ.res.coal > 0)) need.coal = Math.ceil((lights - (civ.res.torches ?? 0)) / 4);
   // Нет леса — нужны саженцы.
   if (civ.needSaplings) need.saplings = Math.max(0, 8 - (civ.res.saplings ?? 0));
   for (const k in need) need[k] = Math.min(CAP[k], Math.ceil(need[k]));
@@ -67,6 +72,8 @@ function spareOf(civ) {
     stone: Math.max(rc.stone, next.stone ?? 0) + 60,
     food: pop * 4 + 10,
     saplings: 4,
+    andesite: civ.era >= 1 ? 60 : 0,
+    coal: Math.ceil((civ.lights?.length ?? 0) / 4) + 4,
     iron: Math.max(rc.iron, next.iron ?? 0) + 8,
     diamond: 0,
   };
@@ -148,7 +155,7 @@ export function marketTick() {
       if (b.qty > 0) deals.push(`купили ${b.qty} ${GOOD_NAME[k]} за ${b.cost} мон.`);
     }
     // Склады ломятся — продают четверть излишков (только дерево/камень/еду).
-    for (const k of ["wood", "stone", "food"]) {
+    for (const k of ["wood", "stone", "andesite", "food"]) {
       if (spare[k] > 400) {
         const q = Math.min(CAP[k], Math.floor(spare[k] / 6));
         const got = sell(civ, k, q);

@@ -138,6 +138,7 @@ export function showCivForm(pl, civ) {
     `§lПрофессии:§r ${roleSummary(civ) || "—"}`,
     `§lПостроек:§r ${civ.buildings.filter((b) => b.t !== "quarry").length}`,
     `§lРесурсы:§r дерево ${r.wood}, камень ${r.stone}, еда ${r.food}/${foodCap(civ)}, железо ${r.iron}, алмазы ${r.diamond ?? 0}, саженцы ${r.saplings ?? 0}`,
+    `§lСклад:§r андезит ${r.andesite ?? 0}, уголь ${r.coal ?? 0}, факелы ${r.torches ?? 0}${civ.lights?.length ? ` §e(ждут света: ${civ.lights.length} мест)` : ""}`,
     `§lКазна:§r ${Math.floor(civ.coins ?? 0)} монет${civ.needSaplings ? "  §2(ищут саженцы — вокруг нет леса)" : ""}`,
     `§lИнструменты:§r ${toolSummary(civ)}`,
     `§lШахта:§r ${mineInfo(civ)}`,
