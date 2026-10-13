@@ -1,13 +1,15 @@
 import { world, system } from "@minecraft/server";
-import { S, P, DIM, getProp, setProp, isNight, loadAll, saveAll, markDirty } from "./core.js";
+import { S, P, DIM, getProp, setProp, isNight, loaded, loadAll, saveAll, markDirty } from "./core.js";
 import { brainOf, moveStep, think, resetTask, updateTag, resetPathBudget } from "./workers.js";
 import {
   assignRoles, searchTick, mineTick, hungerTick, growthTick, eraTick, colonyTick, colonyCheck,
-  settlerThink, completeProject, collapseCheck, foundingScan, floodCheck,
+  settlerThink, completeProject, collapseCheck, foundingScan, floodCheck, streamBuild,
 } from "./society.js";
 import { diplomacyTick, soldierThink, warBuffs, golemTick } from "./war.js";
 import { statusTick, onInteractBlock, onScriptEvent, onItemUse } from "./ui.js";
-import { loadRoads, planRoads, layRoads, tradeTick } from "./links.js";
+import { loadRoads, planRoads, layRoads } from "./links.js";
+import { loadMarket, marketTick } from "./market.js";
+import { catchUp, markRealTime, showReport } from "./offline.js";
 import { rescueIfStuck } from "./nav.js";
 import { isActive, offscreenTick, materialize, takeCensus } from "./offscreen.js";
 import { whTick } from "./wh.js";
@@ -67,6 +69,7 @@ function regroup() {
 }
 
 function everySecond() {
+  if (S.catchingUp) return; // идёт пересчёт времени, пока вас не было
   S.clock++;
   regroup();
   const slow = Math.max(5, Math.round(30 / S.speed));
@@ -79,6 +82,8 @@ function everySecond() {
         // Далеко от игрока — фоновая симуляция раз в 10 секунд.
         civ._activeFor = 0;
         if (S.clock % 10 === 0) offscreenTick(civ, 10);
+        // Но если чанки поселения загружены (в зоне прорисовки) — оплаченное появляется сразу.
+        if (!civ.virtualCenter && loaded(DIM(), civ.center)) streamBuild(civ);
         continue;
       }
       if (wasActive === false) civ._activeFor = 0;
@@ -97,11 +102,13 @@ function everySecond() {
         assignRoles(civ);
       }
       searchTick(civ);
+      streamBuild(civ);
       mineTick(civ);
       colonyCheck(civ);
       if (S.clock % 20 === 0) hungerTick(civ);
+      // Рождения — вдвое чаще прочих событий (раз в 15 с при обычной скорости).
+      if (S.clock % Math.max(3, Math.round(15 / S.speed)) === 0) growthTick(civ);
       if (S.clock % slow === 0) {
-        growthTick(civ);
         colonyTick(civ);
         golemTick(civ);
       }
@@ -117,14 +124,18 @@ function everySecond() {
   try {
     if (S.clock % 30 === 0) diplomacyTick();
     if (S.clock % 60 === 15) planRoads();
-    if (S.clock % 60 === 45) tradeTick();
+    if (S.clock % 30 === 20) marketTick();
     layRoads();
     if (S.clock % 5 === 0) foundingScan();
     statusTick();
   } catch (e) {
     console.warn(`[Цивилизации] ${e}`);
   }
-  if (S.clock % 5 === 0) saveAll();
+  if (S.clock % 5 === 0) {
+    saveAll();
+    markRealTime();
+    showReport();
+  }
 }
 
 // За один вызов «думают» не больше 40 жителей — остальные в следующий раз (бережём FPS).
@@ -227,6 +238,8 @@ function start() {
   started = true;
   loadAll();
   loadRoads();
+  loadMarket();
+  catchUp();
   system.runInterval(moveAll, 2);
   system.runInterval(thinkAll, 10);
   system.runInterval(everySecond, 20);

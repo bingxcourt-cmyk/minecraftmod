@@ -1,5 +1,5 @@
 import { BlockPermutation, EntityDamageCause, system } from "@minecraft/server";
-import { S, P, DIM, getB, getProp, setProp, dXZ, rnd, pick, markDirty, sound, particle, cdTicks, loaded } from "./core.js";
+import { S, P, DIM, getB, getProp, setProp, dXZ, rnd, pick, markDirty, sound, particle, cdTicks, loaded, playersNear } from "./core.js";
 import { isLog, isLeaves, isProtected, isPassableId, isNaturalGround, walkY, standY, strip, groundAt } from "./blocks.js";
 import { makeOps, cropCells, dims } from "./blueprints.js";
 import { findPath, findSafeSpot, rescueIfStuck } from "./nav.js";
@@ -36,6 +36,7 @@ export function resetTask(brain) {
   brain.wander = null;
   brain.sapling = null;
   brain.path = null;
+  brain.plantAt = null;
 }
 
 export function setRole(ent, brain, role, civ) {
@@ -333,15 +334,66 @@ function forester(civ, ent, brain, tick) {
   return true;
 }
 
+// Сажает саженец из запасов поселения (купленный на рынке или принесённый из метрополии).
+function planter(civ, ent, brain, tick) {
+  if ((civ.res.saplings ?? 0) < 1 || (civ.saplings?.length ?? 0) >= 16) return false;
+  const dim = DIM();
+  if (!brain.plantAt) {
+    for (let i = 0; i < 8 && !brain.plantAt; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = rnd(10, 26);
+      const x = Math.floor(civ.center.x + Math.cos(a) * d);
+      const z = Math.floor(civ.center.z + Math.sin(a) * d);
+      if (insideBuildings(civ, x, z, 2)) continue;
+      const g = groundAt(dim, x, z);
+      if (!g || g.liquid || g.unnatural) continue;
+      const above = getB(dim, x, g.y + 1, z);
+      if (!above || !(above.isAir || isPassableId(above.typeId))) continue;
+      brain.plantAt = { x, y: g.y + 1, z };
+    }
+    if (!brain.plantAt) return false;
+  }
+  const p = brain.plantAt;
+  setTarget(brain, { x: p.x + 0.5, y: p.y, z: p.z + 0.5 }, 1.8, true);
+  if (!near(ent, brain.target, 2.2, true)) return true;
+  brain.plantAt = null;
+  const ground = getB(dim, p.x, p.y - 1, p.z);
+  const spot = getB(dim, p.x, p.y, p.z);
+  if (!ground || !spot) return true;
+  try {
+    // На песке и гравии деревья не растут — подсыпают землю.
+    if (!["minecraft:grass_block", "minecraft:dirt", "minecraft:podzol", "minecraft:coarse_dirt"].includes(ground.typeId)) ground.setType("minecraft:dirt");
+    spot.setType("minecraft:oak_sapling");
+  } catch {
+    return true;
+  }
+  civ.res.saplings--;
+  civ.saplings = civ.saplings ?? [];
+  civ.saplings.push({ x: p.x, y: p.y, z: p.z, at: S.clock + Math.round(240 / S.speed) });
+  if (civ.saplings.length >= 8) civ.needSaplings = false;
+  markDirty(civ);
+  particle(dim, "minecraft:crop_growth_emitter", { x: p.x + 0.5, y: p.y + 0.5, z: p.z + 0.5 });
+  brain.cd = tick + cdTicks(20, brain);
+  return true;
+}
+
 function lumberjack(civ, ent, brain, tick) {
   const dim = DIM();
   if (!brain.tree) {
     const t = findTree(civ);
     if (!t) {
-      // Леса рядом нет — ухаживают за саженцами, пока те не станут деревьями.
+      // Леса рядом нет — ухаживают за саженцами, пока те не станут деревьями, и сажают новые.
+      civ._noTree = (civ._noTree ?? 0) + 1;
+      if (civ._noTree > 40 && (civ.saplings?.length ?? 0) < 4 && !civ.needSaplings) {
+        civ.needSaplings = true;
+        markDirty(civ);
+        for (const pl of playersNear(civ.center, 160)) pl.sendMessage(`§2[${civ.name}] Вокруг нет леса — поселение закупит саженцы на рынке.`);
+      }
       if (forester(civ, ent, brain, tick)) return;
+      if (planter(civ, ent, brain, tick)) return;
       return wander(civ, brain, 16);
     }
+    civ._noTree = 0;
     S.claimedTrees.add(t.key);
     brain.tree = { ...t, logs: null };
   }
@@ -364,6 +416,8 @@ function lumberjack(civ, ent, brain, tick) {
     }
     S.claimedTrees.delete(tree.key);
     brain.tree = null;
+    // С дерева падают саженцы — лишние продадут на рынке.
+    if (Math.random() < 0.6 && (civ.res.saplings ?? 0) < 64) civ.res.saplings = (civ.res.saplings ?? 0) + 1;
     brain.cd = tick + cdTicks(20, brain);
     return;
   }
@@ -524,11 +578,15 @@ export function remainingCost(civ) {
   const p = civ.project;
   const need = { wood: 0, stone: 0, iron: 0, food: 0 };
   if (!p || p.paid) return need;
+  // Пересчёт дорогой (тысячи блоков) — запоминаем, пока стройка не продвинулась.
+  const key = `${p.t}:${p.x},${p.z},${p.r}:${p.step}`;
+  if (civ._rc?.key === key) return { ...civ._rc.need };
   const ops = projectOps(civ);
   for (let i = p.step; i < ops.length; i++) {
     const c = ops[i].cost;
     if (c) for (const k in c) need[k] += c[k];
   }
+  civ._rc = { key, need: { ...need } };
   return need;
 }
 
@@ -580,6 +638,33 @@ function liftOut(dim, op) {
       if (spot) e.teleport(spot);
     } catch {}
   }
+}
+
+/**
+ * Мгновенная стройка уже оплаченной постройки (её «построили» в фоне): ставит до maxOps блоков.
+ * Возвращает "done", "more" или "wait" (чанк не загружен).
+ */
+export function fastBuild(civ, maxOps) {
+  const p = civ.project;
+  const ops = projectOps(civ);
+  const dim = DIM();
+  let n = 0;
+  while (p.step < ops.length && n < maxOps) {
+    const op = ops[p.step];
+    const b = getB(dim, op.x, op.y, op.z);
+    if (!b) return "wait";
+    try {
+      if (op.k === "c") {
+        if (!b.isAir && !isProtected(b.typeId)) b.setType("minecraft:air");
+      } else if (op.k === "f") {
+        if (b.isAir || b.isLiquid || isPassableId(b.typeId)) b.setType("minecraft:dirt");
+      } else if (!(b.typeId === op.id && !op.pair)) placeOp(dim, op);
+    } catch {}
+    p.step++;
+    n++;
+  }
+  markDirty(civ);
+  return p.step >= ops.length ? "done" : "more";
 }
 
 /** Выполняет шаги стройки. Возвращает true, если стройка завершена. */
@@ -645,7 +730,8 @@ export function buildStep(civ) {
 }
 
 function builder(civ, ent, brain, tick, onComplete) {
-  if (!civ.project) return lumberjack(civ, ent, brain, tick);
+  // Оплаченное в фоне возводится мгновенно — строителю там делать нечего.
+  if (!civ.project || civ.project.paid) return lumberjack(civ, ent, brain, tick);
   const ops = projectOps(civ);
   const op = ops[Math.min(civ.project.step, ops.length - 1)];
   if (!op) return;

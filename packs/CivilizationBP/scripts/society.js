@@ -5,7 +5,7 @@ import {
 } from "./core.js";
 import { groundAt, standY, waterNear, findDrySpot } from "./blocks.js";
 import { TYPES, getBP, dims, doorFront, toWorld } from "./blueprints.js";
-import { brainOf, setRole, updateTag, resetTask, remainingCost } from "./workers.js";
+import { brainOf, setRole, updateTag, resetTask, remainingCost, fastBuild } from "./workers.js";
 import { findSafeSpot, safeTeleport } from "./nav.js";
 
 export const ERAS = [
@@ -227,9 +227,10 @@ export function hungerTick(civ) {
 }
 
 // ---------- Рост населения ----------
+export const MAX_POP = 50;
 export function growthTick(civ) {
   const pop = popOf(civ);
-  if (civ.starving || pop >= 40 || pop < 1) return;
+  if (civ.starving || pop >= MAX_POP || pop < 1) return;
   if (pop >= housingOf(civ) || civ.res.food < 10 + pop) return;
   const dim = DIM();
   const homes = civ.buildings.filter((b) => getBP(b.t).beds > 0);
@@ -314,7 +315,7 @@ export function chooseNext(civ) {
   const farms = count(civ, (b) => b.t.startsWith("farm"));
   if (farms > 0 && farms * 6 < pop && (civ.starving || civ.res.food < pop * 2)) return { t: FARM_BY_ERA[civ.era], fromQueue: false };
   // Дома и постройки эпохи чередуются, иначе рождения съедают всю стройку.
-  if (pop >= housingOf(civ) && pop < 40 && !(civ.lastHouse && miss.length)) return { t: HOUSE_BY_ERA[civ.era], fromQueue: false };
+  if (pop >= housingOf(civ) && pop < MAX_POP && !(civ.lastHouse && miss.length)) return { t: HOUSE_BY_ERA[civ.era], fromQueue: false };
   if (miss.length) return { t: miss[0], fromQueue: true };
   if (farms * 5 < pop) return { t: FARM_BY_ERA[civ.era], fromQueue: false };
   return null;
@@ -389,8 +390,9 @@ function validate(civ, c, gap = 2) {
   return { base: Math.round(sum / (c.W * c.D)), max };
 }
 
-export function searchTick(civ) {
+export function searchTick(civ, paidOnly = false) {
   if (civ.project) return;
+  if (paidOnly && !civ.offQueue?.length && !S.search.get(civ.id)) return;
   let s = S.search.get(civ.id);
   // Сначала возводим то, что уже оплачено в фоновой симуляции.
   const q = civ.offQueue?.[0];
@@ -586,9 +588,12 @@ export function colonyCheck(civ) {
   if (!arrived && elapsed < 150) return;
   if (!loaded(DIM(), c)) return;
   const colony = newCiv(c, civ.id);
-  const give = { wood: Math.min(40, civ.res.wood), stone: Math.min(15, civ.res.stone), food: Math.min(25, civ.res.food) };
+  const give = { wood: Math.min(60, civ.res.wood), stone: Math.min(25, civ.res.stone), food: Math.min(40, civ.res.food), saplings: Math.min(4, civ.res.saplings ?? 0) };
   for (const k in give) civ.res[k] -= give[k];
   colony.res = { ...give, iron: 0 };
+  const coins = Math.min(40, civ.coins ?? 0);
+  civ.coins = (civ.coins ?? 0) - coins;
+  colony.coins = coins;
   civ.colony = null;
   civ._reassign = true;
   for (const e of settlers) {
@@ -604,6 +609,32 @@ export function colonyCheck(civ) {
   colony.tension[civ.id] = 35;
   markDirty(civ);
   announce(colony, `§b[Цивилизации] Жители ${civ.name} основали колонию ${colony.color}§l${colony.name}§r§b!`, 250);
+}
+
+// ---------- Мгновенная стройка ----------
+/**
+ * Постройки, оплаченные в фоне, появляются целиком, как только их чанки загружены
+ * (в пределах прорисовки, даже если поселение далеко).
+ */
+export function streamBuild(civ) {
+  if (!civ.project && civ.offQueue?.length) searchTick(civ, true);
+  const p = civ.project;
+  if (!p?.paid || civ._fastJob) return;
+  civ._fastJob = true;
+  function* job() {
+    for (;;) {
+      if (civ.project !== p || !S.civs.has(civ.id)) break;
+      const r = fastBuild(civ, 120);
+      if (r === "done") {
+        completeProject(civ);
+        break;
+      }
+      if (r === "wait") break;
+      yield;
+    }
+    civ._fastJob = false;
+  }
+  system.runJob(job());
 }
 
 // ---------- Затопление ----------

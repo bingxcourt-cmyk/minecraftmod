@@ -1,8 +1,7 @@
 import { world, system } from "@minecraft/server";
 import { S, DIM, getB, loaded, markDirty, playersNear, dXZ } from "./core.js";
-import { groundAt, isPassableId, strip, findDrySpot } from "./blocks.js";
-import { ERAS, popOf } from "./society.js";
-import { remainingCost, foodCap } from "./workers.js";
+import { groundAt, isPassableId, findDrySpot } from "./blocks.js";
+import { remainingCost } from "./workers.js";
 import { findSafeSpot } from "./nav.js";
 
 // ---------- Дороги между поселениями ----------
@@ -25,7 +24,8 @@ export function saveRoads() {
   } catch {}
 }
 
-const roadBetween = (a, b) => (S.roads ?? []).find((r) => (r.a === a.id && r.b === b.id) || (r.a === b.id && r.b === a.id));
+const placedShare = (r) => (r.done.split("1").length - 1) / r.done.length;
+export const roadBetween = (a, b) => (S.roads ?? []).find((r) => (r.a === a.id && r.b === b.id) || (r.a === b.id && r.b === a.id));
 
 /** Раз в минуту: кто с кем строит дорогу. */
 export function planRoads() {
@@ -61,7 +61,7 @@ export function planRoads() {
     for (const o of targets) {
       if (roadBetween(civ, o) || dXZ(o.center, civ.center) > ROAD_MAX) continue;
       const n = Math.ceil(Math.max(Math.abs(o.center.x - civ.center.x), Math.abs(o.center.z - civ.center.z)));
-      S.roads.push({ a: civ.id, b: o.id, x1: civ.center.x, z1: civ.center.z, x2: o.center.x, z2: o.center.z, done: "0".repeat(n + 1), cur: 0, pa: 0, pb: 0 });
+      S.roads.push({ a: civ.id, b: o.id, x1: civ.center.x, z1: civ.center.z, x2: o.center.x, z2: o.center.z, done: "0".repeat(n + 1), cur: 0, pa: 0, pb: 0, v: 2 });
       const told = new Set();
       for (const pl of [...playersNear(civ.center, 200), ...playersNear(o.center, 200)]) {
         if (told.has(pl.id)) continue;
@@ -75,78 +75,136 @@ export function planRoads() {
   saveRoads();
 }
 
-const DIRT = new Set(["grass_block", "dirt", "coarse_dirt", "podzol", "mycelium", "rooted_dirt", "grass_path", "dirt_path", "snow"]);
+// ---------- Укладка ----------
+// Дорога шириной 3: по центру каменный кирпич, по краям полированный андезит, по бокам заборы
+// (с проходами каждые 16 блоков), фонари на столбах каждые 12 блоков, через воду — мост с перилами.
+const ROAD_SPEED = 0.25; // блоков дороги в секунду с каждой стороны
+const ROAD_COST = { stone: 3, wood: 2 }; // за 1 блок длины: камень на покрытие, дерево на заборы
 
-function layPoint(dim, x, z, side) {
-  const g = groundAt(dim, x, z);
-  if (!g) return false; // чанк не загружен — вернёмся позже
-  if (g.unnatural) return true; // постройки не трогаем
-  const b = getB(dim, x, g.y, z);
-  const above = getB(dim, x, g.y + 1, z);
-  if (!b || !above) return false;
+const SOFT_ABOVE = (b) => {
+  const id = b.typeId;
+  return !b.isAir && !b.isLiquid && (isPassableId(id) || id.endsWith("leaves") || id.endsWith("_log") || id === "minecraft:snow_layer");
+};
+
+function setIf(b, id) {
   try {
+    if (b && b.typeId !== id) b.setType(id);
+  } catch {}
+}
+
+function clearAbove(dim, x, y, z, h) {
+  for (let k = 1; k <= h; k++) {
+    const b = getB(dim, x, y + k, z);
+    if (b && SOFT_ABOVE(b)) setIf(b, "minecraft:air");
+  }
+}
+
+/** Кладёт поперечный срез дороги в точке i. false — чанк ещё не загружен. */
+function layRoadPoint(dim, r, i) {
+  const n = r.done.length - 1;
+  const x = Math.round(r.x1 + ((r.x2 - r.x1) * i) / n);
+  const z = Math.round(r.z1 + ((r.z2 - r.z1) * i) / n);
+  const [px, pz] = Math.abs(r.x2 - r.x1) > Math.abs(r.z2 - r.z1) ? [0, 1] : [1, 0];
+  for (let o = -2; o <= 2; o++) if (!loaded(dim, { x: x + px * o, z: z + pz * o })) return false;
+  let bridge = false;
+  for (let o = -2; o <= 2; o++) {
+    const cx = x + px * o;
+    const cz = z + pz * o;
+    const g = groundAt(dim, cx, cz);
+    if (!g) return false;
+    if (g.unnatural) continue; // постройки и чужое не трогаем
+    const b = getB(dim, cx, g.y, cz);
+    if (!b) return false;
+    const edge = Math.abs(o) === 2;
     if (g.liquid) {
-      // Мост через воду.
-      if (b.typeId === "minecraft:water") b.setType("minecraft:spruce_planks");
-      return true;
+      // Мост: настил на уровне воды, по краям перила.
+      bridge = true;
+      if (b.typeId === "minecraft:water") setIf(b, "minecraft:spruce_planks");
+      if (edge) setIf(getB(dim, cx, g.y + 1, cz), "minecraft:spruce_fence");
+      continue;
     }
-    if (!above.isAir && isPassableId(above.typeId)) above.setType("minecraft:air");
-    const id = strip(b.typeId);
-    if (id === "grass_path") return true;
-    if (DIRT.has(id)) b.setType("minecraft:grass_path");
-    else if (above.isAir || isPassableId(above.typeId)) b.setType("minecraft:gravel");
-    // Фонарный столб вдоль дороги.
-    if (side) {
-      const post = getB(dim, x, g.y + 1, z);
-      const top = getB(dim, x, g.y + 2, z);
-      if (post?.isAir && top?.isAir) {
-        post.setType("minecraft:oak_fence");
-        top.setType("minecraft:torch");
+    clearAbove(dim, cx, g.y, cz, 4);
+    if (!edge) {
+      setIf(b, o === 0 ? "minecraft:stone_bricks" : "minecraft:polished_andesite");
+      continue;
+    }
+    // Забор по краю, проход каждые 16 блоков, фонарный столб каждые 12.
+    if (i % 16 === 8) continue;
+    const post = getB(dim, cx, g.y + 1, cz);
+    if (!post?.isAir) continue;
+    setIf(post, "minecraft:oak_fence");
+    if (i % 12 === 0) {
+      const p2 = getB(dim, cx, g.y + 2, cz);
+      const p3 = getB(dim, cx, g.y + 3, cz);
+      if (p2?.isAir && p3?.isAir) {
+        setIf(p2, "minecraft:oak_fence");
+        setIf(p3, "minecraft:lantern");
       }
     }
-  } catch {}
+  }
+  void bridge;
   return true;
 }
 
-const placedShare = (r) => (r.done.split("1").length - 1) / r.done.length;
+// Дорожники работают за счёт поселения: на каждый блок длины — камень и дерево из запасов,
+// но только из излишков (стройка и эпоха важнее).
+function payRoad(civ) {
+  if (!civ) return false;
+  const rc = remainingCost(civ);
+  for (const [k, v] of Object.entries(ROAD_COST)) if ((civ.res[k] ?? 0) - v < (rc[k] ?? 0) + 30) return false;
+  for (const [k, v] of Object.entries(ROAD_COST)) civ.res[k] -= v;
+  markDirty(civ);
+  return true;
+}
 
-// Скорость дорожников: блоков в секунду с каждой стороны (каждое поселение ведёт дорогу навстречу).
-const ROAD_SPEED = 0.25;
-
-/**
- * Раз в секунду. Дорогу строят всегда, даже без игрока: прогресс pa/pb растёт с обоих концов.
- * Блоки ставятся только там, где чанк загружен, — построенное без вас появляется, когда вы рядом.
- */
-export function layRoads() {
-  const dim = DIM();
-  let budget = 24;
-  let changed = false;
+/** Рост прогресса дорог за dt секунд (вживую, в фоне и при «догонялках» за время вне игры). */
+export function progressRoads(dt) {
   for (const r of S.roads ?? []) {
     const n = r.done.length - 1;
     const a = S.civs.get(r.a);
     const b = S.civs.get(r.b);
-    // Пока поселение живо и не воюет с соседом, его дорожники работают.
-    const peace = !(a?.war && a.war.enemy === r.b);
-    if (a && peace) r.pa = Math.min(n + 1, (r.pa ?? 0) + ROAD_SPEED * S.speed);
-    if (b && peace) r.pb = Math.min(n + 1, (r.pb ?? 0) + ROAD_SPEED * S.speed);
+    if (!a || !b || (a.war && a.war.enemy === r.b)) continue;
+    for (const [civ, key] of [[a, "pa"], [b, "pb"]]) {
+      if (civ.era < 1 && !civ.parent) continue;
+      let left = ROAD_SPEED * S.speed * dt;
+      while (left > 0 && (r[key] ?? 0) < n + 1 - (key === "pa" ? r.pb ?? 0 : r.pa ?? 0)) {
+        const step = Math.min(1, left);
+        const before = Math.floor(r[key] ?? 0);
+        const after = Math.floor((r[key] ?? 0) + step);
+        if (after > before && !payRoad(civ)) break;
+        r[key] = (r[key] ?? 0) + step;
+        left -= step;
+      }
+    }
+  }
+}
+
+/** Раз в секунду: прогресс растёт, а построенные участки появляются там, где загружены чанки. */
+export function layRoads() {
+  const dim = DIM();
+  progressRoads(1);
+  let budget = 16;
+  let changed = false;
+  for (const r of S.roads ?? []) {
+    // Старые узкие дороги (до версии 2.0) перекладываем красиво, уже оплаченный прогресс сохраняется.
+    if (r.v !== 2) {
+      r.v = 2;
+      r.done = "0".repeat(r.done.length);
+      r.pa = r.pa ?? r.done.length / 2;
+      r.pb = r.pb ?? r.done.length / 2;
+    }
     if (budget <= 0 || !r.done.includes("0")) continue;
+    const n = r.done.length - 1;
     const chars = r.done.split("");
     for (let k = 0; k < 60 && budget > 0; k++) {
       const i = (r.cur + k) % (n + 1);
       if (chars[i] === "1") continue;
-      if (i >= (r.pa ?? 0) && i <= n - (r.pb ?? 0)) continue; // этот участок ещё не построен
+      if (i >= (r.pa ?? 0) && i <= n - (r.pb ?? 0)) continue; // ещё не построено
       if (i < ROAD_SKIP || i > n - ROAD_SKIP) {
         chars[i] = "1";
         continue;
       }
-      const x = Math.round(r.x1 + ((r.x2 - r.x1) * i) / n);
-      const z = Math.round(r.z1 + ((r.z2 - r.z1) * i) / n);
-      if (!loaded(dim, { x, z })) continue;
-      // Ширина 2: вторая полоса сбоку по основной оси дороги.
-      const wide = Math.abs(r.x2 - r.x1) > Math.abs(r.z2 - r.z1) ? [x, z + 1, x, z + 2] : [x + 1, z, x + 2, z];
-      const ok = layPoint(dim, x, z, false) && layPoint(dim, wide[0], wide[1], false);
-      if (i % 24 === 12) layPoint(dim, wide[2], wide[3], true);
-      if (!ok) continue;
+      if (!layRoadPoint(dim, r, i)) continue;
       chars[i] = "1";
       budget--;
       changed = true;
@@ -154,7 +212,6 @@ export function layRoads() {
     r.cur = (r.cur + 60) % (n + 1);
     r.done = chars.join("");
   }
-  // Прогресс дорожников сохраняем всегда, даже если блоки пока не ставились.
   if ((changed || (S.roads ?? []).length) && S.clock % 10 === 0) saveRoads();
 }
 
@@ -169,80 +226,6 @@ export function roadInfo(civ) {
       return `к ${o?.name ?? "?"} — ${pct}%`;
     })
     .join(", ");
-}
-
-// ---------- Торговля ----------
-// Цены в «единицах»: 1 железо = 64 дерева, 1 алмаз = 512 дерева.
-export const VALUE = { wood: 1, stone: 1, food: 2, iron: 64, diamond: 512 };
-const CAP = { wood: 200, stone: 200, food: 60, iron: 8 };
-const RES = { wood: "дерева", stone: "камня", food: "еды", iron: "железа", diamond: "алмазов" };
-
-function wants(civ) {
-  const rc = remainingCost(civ);
-  /** @type {{stone?: number, iron?: number}} */
-  const next = ERAS[civ.era].next ?? {};
-  return {
-    wood: rc.wood + 40,
-    stone: Math.max(rc.stone, next.stone ?? 0) + 30,
-    iron: Math.max(rc.iron, next.iron ?? 0) + 6,
-    food: popOf(civ) * 3 + 10,
-    diamond: 0,
-  };
-}
-
-function tryTrade(buyer, seller) {
-  const wb = wants(buyer);
-  const ws = wants(seller);
-  for (const k of ["iron", "food", "stone", "wood"]) {
-    const need = Math.max(0, wb[k] - (buyer.res[k] ?? 0));
-    const spare = Math.max(0, (seller.res[k] ?? 0) - ws[k] - 10);
-    let qty = Math.min(need, spare, CAP[k]);
-    if (qty < 1) continue;
-    // Платят тем, чего у покупателя больше всего лишнего.
-    const pay = Object.keys(VALUE)
-      .filter((r) => r !== k)
-      .map((r) => ({ r, spare: Math.max(0, (buyer.res[r] ?? 0) - wb[r] - 10) }))
-      .filter((p) => p.spare * VALUE[p.r] >= VALUE[k])
-      .sort((a, b) => b.spare * VALUE[b.r] - a.spare * VALUE[a.r])[0];
-    if (!pay) continue;
-    qty = Math.min(qty, Math.floor((pay.spare * VALUE[pay.r]) / VALUE[k]));
-    if (qty < 1) continue;
-    const price = Math.ceil((qty * VALUE[k]) / VALUE[pay.r]);
-    buyer.res[pay.r] -= price;
-    seller.res[pay.r] = (seller.res[pay.r] ?? 0) + price;
-    seller.res[k] -= qty;
-    buyer.res[k] = (buyer.res[k] ?? 0) + qty;
-    if (k === "food") buyer.res.food = Math.min(buyer.res.food, foodCap(buyer));
-    // Торговля сближает: напряжение падает.
-    buyer.tension[seller.id] = Math.max(0, (buyer.tension[seller.id] ?? 0) - 5);
-    seller.tension[buyer.id] = Math.max(0, (seller.tension[buyer.id] ?? 0) - 5);
-    const text = `${buyer.name} купили у ${seller.name} ${qty} ${RES[k]} за ${price} ${RES[pay.r]}`;
-    for (const c of [buyer, seller]) {
-      c.trades = [text, ...(c.trades ?? [])].slice(0, 5);
-      markDirty(c);
-    }
-    const msg = `§a[Торговля] ${buyer.color}${buyer.name}§a купили у ${seller.color}${seller.name}§a: ${qty} ${RES[k]} за ${price} ${RES[pay.r]}.`;
-    const seen = new Set();
-    for (const pl of [...playersNear(buyer.center, 160), ...playersNear(seller.center, 160)]) {
-      if (seen.has(pl.id)) continue;
-      seen.add(pl.id);
-      pl.sendMessage(msg);
-    }
-    return true;
-  }
-  return false;
-}
-
-/** Раз в минуту: соседи с эпохи «Деревня», которые не воюют друг с другом, обмениваются товарами. */
-export function tradeTick() {
-  const civs = [...S.civs.values()].filter((c) => c.era >= 1 && popOf(c) > 0);
-  for (let i = 0; i < civs.length; i++) for (let j = i + 1; j < civs.length; j++) {
-    const a = civs[i];
-    const b = civs[j];
-    if (a.war?.enemy === b.id) continue;
-    if (!roadBetween(a, b) && dXZ(a.center, b.center) > ROAD_MAX) continue;
-    if (!tryTrade(a, b)) tryTrade(b, a);
-  }
 }
 
 // ---------- Телепорт к поселению ----------

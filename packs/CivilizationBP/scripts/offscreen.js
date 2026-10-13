@@ -2,7 +2,7 @@ import { world } from "@minecraft/server";
 import { S, DIM, loaded, playersNear, markDirty, personName, P, setProp } from "./core.js";
 import { TIERS, TOOL_FOR, toolTier, bestCraftable } from "./tools.js";
 import { TYPES, getBP } from "./blueprints.js";
-import { popOf, housingOf, chooseNext, count, has, join, eraTick, noteBuilt, newCiv, MAX_CIVS, MAX_COLONIES } from "./society.js";
+import { MAX_POP, popOf, housingOf, chooseNext, count, has, join, eraTick, noteBuilt, newCiv, MAX_CIVS, MAX_COLONIES } from "./society.js";
 import { findDrySpot } from "./blocks.js";
 import { brainOf, foodCap, remainingCost } from "./workers.js";
 import { findSafeSpot } from "./nav.js";
@@ -116,11 +116,13 @@ export function offscreenTick(civ, dt) {
   const mult = (role) => TIERS[T[role] ?? 0].mult;
 
   // Добыча.
-  gain(civ, off, "wood", (R.lumberjack ?? 0) * RATE.wood(mult("lumberjack")) * RATE.eff * k);
+  const wood = (R.lumberjack ?? 0) * RATE.wood(mult("lumberjack")) * RATE.eff * k;
+  gain(civ, off, "wood", wood);
+  if ((civ.res.saplings ?? 0) < 64) gain(civ, off, "saplings", wood / 30); // примерно 1 саженец с двух деревьев
   const blocks = (R.miner ?? 0) * RATE.blocks(mult("miner")) * RATE.eff * k;
   gain(civ, off, "stone", blocks);
-  if ((T.miner ?? 0) >= 2) gain(civ, off, "iron", blocks * 0.02); // железо — с каменной кирки
-  if ((T.miner ?? 0) >= 3) gain(civ, off, "diamond", blocks * 0.002); // алмазы — с железной
+  if ((T.miner ?? 0) >= 2) gain(civ, off, "iron", blocks * 0.008); // железо — с каменной кирки
+  if ((T.miner ?? 0) >= 3) gain(civ, off, "diamond", blocks * 0.0006); // алмазы — с железной
 
   // Еда и голод.
   const farms = count(civ, (b) => b.t.startsWith("farm")) + (civ.offQueue ?? []).filter((q) => q.t.startsWith("farm")).length;
@@ -134,7 +136,7 @@ export function offscreenTick(civ, dt) {
     // Голодают: каждые 2 минуты без еды умирает один житель.
     civ.starving = true;
     off.hunger += k;
-    if (off.hunger >= 2) {
+    while (off.hunger >= 2 && popOf(civ) > 0) {
       off.hunger -= 2;
       off.pop--;
       off.died++;
@@ -143,11 +145,16 @@ export function offscreenTick(civ, dt) {
   } else {
     civ.starving = false;
     off.hunger = Math.max(0, off.hunger - k);
-    // Рождения: раз в 45 секунд, если есть еда и свободные кровати.
-    if (civ.res.food >= 10 + pop && pop < housingOf(civ) && pop < 40) {
-      off.birth += k;
-      if (off.birth >= 0.75) {
+    // Рождения: раз в 20 секунд, если есть еда и свободные кровати (до 50 жителей).
+    off.birth += k;
+    while (off.birth >= 0.35) {
+      off.birth -= 0.35;
+      const p = popOf(civ);
+      if (civ.res.food < 10 + p || p >= housingOf(civ) || p >= MAX_POP) {
         off.birth = 0;
+        break;
+      }
+      {
         off.pop++;
         off.born++;
         civ.born++;
@@ -232,9 +239,12 @@ function colonyOffscreen(civ, pop) {
   colony.virtualCenter = true;
   colony.census = { pop: 4, roles: {}, tiers: { ...(civ.census?.tiers ?? {}) } };
   offOf(colony);
-  const give = { wood: Math.min(40, civ.res.wood), stone: Math.min(15, civ.res.stone), food: Math.min(25, civ.res.food) };
+  const give = { wood: Math.min(60, civ.res.wood), stone: Math.min(25, civ.res.stone), food: Math.min(40, civ.res.food), saplings: Math.min(4, civ.res.saplings ?? 0) };
   for (const k in give) civ.res[k] -= give[k];
   colony.res = { ...give, iron: 0 };
+  const coins = Math.min(40, civ.coins ?? 0);
+  civ.coins = (civ.coins ?? 0) - coins;
+  colony.coins = coins;
   offOf(civ).pop -= 4;
   civ.coloniesFounded = (civ.coloniesFounded ?? 0) + 1;
   offOf(civ).colonies = (offOf(civ).colonies ?? 0) + 1;

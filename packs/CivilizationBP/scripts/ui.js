@@ -8,6 +8,7 @@ import { declareWar } from "./war.js";
 import { whLine, whCommand, showWhForm } from "./wh.js";
 import { mineInfo } from "./mine.js";
 import { roadInfo, teleportTo } from "./links.js";
+import { marketText } from "./market.js";
 import { TOOL_FOR, TIERS, toolTier } from "./tools.js";
 
 export function nearestCiv(p, maxDist) {
@@ -136,12 +137,13 @@ export function showCivForm(pl, civ) {
     `§lЖители:§r ${popOf(civ)} (мест в домах: ${housingOf(civ)})`,
     `§lПрофессии:§r ${roleSummary(civ) || "—"}`,
     `§lПостроек:§r ${civ.buildings.filter((b) => b.t !== "quarry").length}`,
-    `§lРесурсы:§r дерево ${r.wood}, камень ${r.stone}, еда ${r.food}/${foodCap(civ)}, железо ${r.iron}, алмазы ${r.diamond ?? 0}`,
+    `§lРесурсы:§r дерево ${r.wood}, камень ${r.stone}, еда ${r.food}/${foodCap(civ)}, железо ${r.iron}, алмазы ${r.diamond ?? 0}, саженцы ${r.saplings ?? 0}`,
+    `§lКазна:§r ${Math.floor(civ.coins ?? 0)} монет${civ.needSaplings ? "  §2(ищут саженцы — вокруг нет леса)" : ""}`,
     `§lИнструменты:§r ${toolSummary(civ)}`,
     `§lШахта:§r ${mineInfo(civ)}`,
     eraNeed(civ),
     `§lДороги:§r ${roadInfo(civ)}`,
-    (civ.trades ?? []).length ? `§lТорговля:§r ${civ.trades.slice(0, 3).join("; ")}` : "",
+    (civ.trades ?? []).length ? `§lРынок:§r ${civ.trades.slice(0, 3).join("; ")}` : "",
     `§lРодилось:§r ${civ.born}  §lПогибло:§r ${civ.deaths}  §lПобед в боях:§r ${civ.kills}`,
     parent ? `§lМетрополия:§r ${parent.name}` : "",
     "",
@@ -198,13 +200,24 @@ export function onItemUse(ev) {
   new ActionFormData()
     .title("Цивилизации")
     .button("Телепорт к поселению")
+    .button("Рынок: цены и казна")
     .button("ВХ на профессии")
     .button("Закрыть")
     .show(pl)
     .then((res) => {
       if (res.selection === 0) showTpForm(pl);
-      if (res.selection === 1) showWhForm(pl);
+      if (res.selection === 1) showMarketForm(pl);
+      if (res.selection === 2) showWhForm(pl);
     })
+    .catch(() => {});
+}
+
+export function showMarketForm(pl) {
+  new ActionFormData()
+    .title("Рынок")
+    .body(marketText())
+    .button("Закрыть")
+    .show(pl)
     .catch(() => {});
 }
 
@@ -290,6 +303,10 @@ export function onScriptEvent(ev) {
       else S.nightWork = !S.nightWork;
       saveAll();
       return say(S.nightWork ? "§eНочью жители работают." : "§eНочью мирные жители спят (работают только воины).");
+    }
+    case "civ:market": {
+      if (!pl || pl.typeId !== "minecraft:player") return say(marketText());
+      return showMarketForm(pl);
     }
     case "civ:tp": {
       if (!pl || pl.typeId !== "minecraft:player") return say("§cКоманду должен выполнить игрок.");
