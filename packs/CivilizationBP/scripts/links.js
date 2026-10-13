@@ -30,12 +30,23 @@ const roadBetween = (a, b) => (S.roads ?? []).find((r) => (r.a === a.id && r.b =
 /** Раз в минуту: кто с кем строит дорогу. */
 export function planRoads() {
   S.roads = S.roads ?? [];
-  const civs = [...S.civs.values()].filter((c) => !c.virtualCenter);
+  const civs = [...S.civs.values()];
+  // Поселение перенесло центр (затопление, колония встала на сушу) — дорогу ведём к новому месту,
+  // если её ещё почти не начали класть на самом деле.
+  for (const r of S.roads) {
+    const a = S.civs.get(r.a);
+    const b = S.civs.get(r.b);
+    if (!a || !b) continue;
+    const moved = Math.hypot(a.center.x - r.x1, a.center.z - r.z1) > 10 || Math.hypot(b.center.x - r.x2, b.center.z - r.z2) > 10;
+    if (!moved || placedShare(r) > 0.5) continue;
+    const n = Math.ceil(Math.max(Math.abs(b.center.x - a.center.x), Math.abs(b.center.z - a.center.z)));
+    Object.assign(r, { x1: a.center.x, z1: a.center.z, x2: b.center.x, z2: b.center.z, done: "0".repeat(n + 1), cur: 0 });
+  }
   for (const civ of civs) {
     if (civ.era < 1) continue;
     const targets = [];
     const parent = civ.parent ? S.civs.get(civ.parent) : undefined;
-    if (parent && !parent.virtualCenter) targets.push(parent);
+    if (parent) targets.push(parent);
     let nearest;
     let bd = ROAD_MAX;
     for (const o of civs) {
@@ -50,7 +61,7 @@ export function planRoads() {
     for (const o of targets) {
       if (roadBetween(civ, o) || dXZ(o.center, civ.center) > ROAD_MAX) continue;
       const n = Math.ceil(Math.max(Math.abs(o.center.x - civ.center.x), Math.abs(o.center.z - civ.center.z)));
-      S.roads.push({ a: civ.id, b: o.id, x1: civ.center.x, z1: civ.center.z, x2: o.center.x, z2: o.center.z, done: "0".repeat(n + 1), cur: 0 });
+      S.roads.push({ a: civ.id, b: o.id, x1: civ.center.x, z1: civ.center.z, x2: o.center.x, z2: o.center.z, done: "0".repeat(n + 1), cur: 0, pa: 0, pb: 0 });
       const told = new Set();
       for (const pl of [...playersNear(civ.center, 200), ...playersNear(o.center, 200)]) {
         if (told.has(pl.id)) continue;
@@ -97,19 +108,33 @@ function layPoint(dim, x, z, side) {
   return true;
 }
 
-/** Раз в секунду: кладём несколько клеток дорог в загруженных чанках. */
+const placedShare = (r) => (r.done.split("1").length - 1) / r.done.length;
+
+// Скорость дорожников: блоков в секунду с каждой стороны (каждое поселение ведёт дорогу навстречу).
+const ROAD_SPEED = 0.25;
+
+/**
+ * Раз в секунду. Дорогу строят всегда, даже без игрока: прогресс pa/pb растёт с обоих концов.
+ * Блоки ставятся только там, где чанк загружен, — построенное без вас появляется, когда вы рядом.
+ */
 export function layRoads() {
   const dim = DIM();
-  let budget = 8;
+  let budget = 24;
   let changed = false;
   for (const r of S.roads ?? []) {
-    if (budget <= 0) break;
     const n = r.done.length - 1;
-    if (!r.done.includes("0")) continue;
+    const a = S.civs.get(r.a);
+    const b = S.civs.get(r.b);
+    // Пока поселение живо и не воюет с соседом, его дорожники работают.
+    const peace = !(a?.war && a.war.enemy === r.b);
+    if (a && peace) r.pa = Math.min(n + 1, (r.pa ?? 0) + ROAD_SPEED * S.speed);
+    if (b && peace) r.pb = Math.min(n + 1, (r.pb ?? 0) + ROAD_SPEED * S.speed);
+    if (budget <= 0 || !r.done.includes("0")) continue;
     const chars = r.done.split("");
-    for (let k = 0; k < 40 && budget > 0; k++) {
+    for (let k = 0; k < 60 && budget > 0; k++) {
       const i = (r.cur + k) % (n + 1);
       if (chars[i] === "1") continue;
+      if (i >= (r.pa ?? 0) && i <= n - (r.pb ?? 0)) continue; // этот участок ещё не построен
       if (i < ROAD_SKIP || i > n - ROAD_SKIP) {
         chars[i] = "1";
         continue;
@@ -126,10 +151,11 @@ export function layRoads() {
       budget--;
       changed = true;
     }
-    r.cur = (r.cur + 40) % (n + 1);
+    r.cur = (r.cur + 60) % (n + 1);
     r.done = chars.join("");
   }
-  if (changed && S.clock % 10 === 0) saveRoads();
+  // Прогресс дорожников сохраняем всегда, даже если блоки пока не ставились.
+  if ((changed || (S.roads ?? []).length) && S.clock % 10 === 0) saveRoads();
 }
 
 export function roadInfo(civ) {
@@ -138,7 +164,8 @@ export function roadInfo(civ) {
   return list
     .map((r) => {
       const o = S.civs.get(r.a === civ.id ? r.b : r.a);
-      const pct = Math.round((r.done.split("1").length - 1) / r.done.length * 100);
+      const n = r.done.length;
+      const pct = Math.min(100, Math.round((((r.pa ?? 0) + (r.pb ?? 0)) / n) * 100));
       return `к ${o?.name ?? "?"} — ${pct}%`;
     })
     .join(", ");
