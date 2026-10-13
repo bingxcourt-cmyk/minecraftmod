@@ -3,7 +3,7 @@ import {
   S, P, DIM, getB, getProp, setProp, dXZ, rnd, pick, markDirty, announce, sound, particle, loaded,
   civName, civColor, personName, deleteCiv, playersNear, isNight,
 } from "./core.js";
-import { groundAt, standY } from "./blocks.js";
+import { groundAt, standY, waterNear, findDrySpot } from "./blocks.js";
 import { TYPES, getBP, dims, doorFront, toWorld } from "./blueprints.js";
 import { brainOf, setRole, updateTag, resetTask, remainingCost } from "./workers.js";
 import { findSafeSpot, safeTeleport } from "./nav.js";
@@ -292,6 +292,7 @@ export function chooseNext(civ) {
   const pop = popOf(civ);
   const q = ERAS[civ.era].queue;
   if (civ.qi < q.length && q[civ.qi] === "center") return { t: "center", fromQueue: true };
+  if (civ.era > 0 && !has(civ, "center")) return { t: "center", fromQueue: false };
   const farms = count(civ, (b) => b.t.startsWith("farm"));
   if (farms > 0 && farms * 6 < pop && (civ.starving || civ.res.food < pop * 2)) return { t: FARM_BY_ERA[civ.era], fromQueue: false };
   // Дома и постройки эпохи чередуются, иначе рождения съедают всю стройку.
@@ -361,6 +362,12 @@ function validate(civ, c, gap = 2) {
     sum += g.y;
   }
   if (max - min > (c.W * c.D > 120 ? 4 : 3)) return undefined;
+  // Рядом с водой не строим: выровняют площадку ниже уровня воды — и всё затопит.
+  for (let x = -2; x <= c.W + 1; x++) for (let z = -2; z <= c.D + 1; z++) {
+    if (x >= 0 && x < c.W && z >= 0 && z < c.D) continue;
+    const g = groundAt(dim, c.x + x, c.z + z);
+    if (g?.liquid) return undefined;
+  }
   return { base: Math.round(sum / (c.W * c.D)), max };
 }
 
@@ -521,7 +528,7 @@ export function colonyTick(civ) {
     if (!loaded(dim, p)) continue;
     if (S.civs.size >= MAX_CIVS || [...S.civs.values()].some((c) => dXZ(c.center, p) < 60)) continue;
     const g = groundAt(dim, p.x, p.z);
-    if (!g || g.liquid) continue;
+    if (!g || g.liquid || waterNear(dim, p.x, p.z, 8)) continue;
     dest = { x: p.x, y: g.y + 1, z: p.z };
   }
   civ.colonyAt = S.clock + Math.round(1500 / S.speed);
@@ -577,6 +584,34 @@ export function colonyCheck(civ) {
   colony.tension[civ.id] = 35;
   markDirty(civ);
   announce(colony, `§b[Цивилизации] Жители ${civ.name} основали колонию ${colony.color}§l${colony.name}§r§b!`, 250);
+}
+
+// ---------- Затопление ----------
+/** Раз в 30 секунд: если центр поселения залило водой — переносим поселение на сушу. */
+export function floodCheck(civ) {
+  const dim = DIM();
+  const g = groundAt(dim, Math.floor(civ.center.x), Math.floor(civ.center.z));
+  if (!g || !g.liquid) return;
+  const dry = findDrySpot(dim, civ.center.x, civ.center.z, 64);
+  if (!dry) return;
+  // Затопленные постройки больше не считаются: их отстроят заново на суше.
+  const before = civ.buildings.length;
+  civ.buildings = civ.buildings.filter((b) => {
+    const c = groundAt(dim, Math.floor(b.x + b.w / 2), Math.floor(b.z + b.d / 2));
+    return !c?.liquid;
+  });
+  if (civ.project) {
+    const { W, D } = dims(civ.project.t, civ.project.r);
+    const c = groundAt(dim, Math.floor(civ.project.x + W / 2), Math.floor(civ.project.z + D / 2));
+    if (c?.liquid) civ.project = null;
+  }
+  civ.center = dry;
+  S.search.delete(civ.id);
+  S.opsCache.delete(civ.id);
+  S.cellsCache.delete(civ.id);
+  civ._reassign = true;
+  markDirty(civ);
+  announce(civ, `§9[${civ.name}] Поселение затопило! Жители переносят центр на сушу (${dry.x}, ${dry.z}), потеряно построек: ${before - civ.buildings.length}.`, 200);
 }
 
 // ---------- Гибель цивилизации ----------

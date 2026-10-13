@@ -3,7 +3,7 @@ import { S, DIM, loaded, playersNear, markDirty, personName, P, setProp } from "
 import { TIERS, TOOL_FOR, toolTier, bestCraftable } from "./tools.js";
 import { TYPES, getBP } from "./blueprints.js";
 import { popOf, housingOf, chooseNext, count, has, join, eraTick, noteBuilt, newCiv, MAX_CIVS, MAX_COLONIES } from "./society.js";
-import { groundAt } from "./blocks.js";
+import { findDrySpot } from "./blocks.js";
 import { brainOf, foodCap, remainingCost } from "./workers.js";
 import { findSafeSpot } from "./nav.js";
 
@@ -247,19 +247,8 @@ function colonyOffscreen(civ, pop) {
 // Центр колонии, основанной вдали, ставим на настоящую сушу, когда чанк загрузился.
 function fixCenter(civ) {
   if (!civ.virtualCenter) return;
-  const dim = DIM();
-  for (let r = 0; r <= 32; r += 4) {
-    for (let k = 0; k < Math.max(1, r * 2); k++) {
-      const a = (k / Math.max(1, r * 2)) * Math.PI * 2;
-      const x = Math.floor(civ.center.x + Math.cos(a) * r);
-      const z = Math.floor(civ.center.z + Math.sin(a) * r);
-      const g = groundAt(dim, x, z);
-      if (!g || g.liquid) continue;
-      civ.center = { x, y: g.y + 1, z };
-      civ.virtualCenter = false;
-      return;
-    }
-  }
+  const dry = findDrySpot(DIM(), civ.center.x, civ.center.z, 64);
+  if (dry) civ.center = dry;
   civ.virtualCenter = false;
 }
 

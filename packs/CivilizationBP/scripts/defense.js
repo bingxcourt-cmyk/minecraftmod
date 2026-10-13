@@ -1,5 +1,5 @@
 import { EntityDamageCause } from "@minecraft/server";
-import { DIM, d2, sound, particle, cdTicks } from "./core.js";
+import { DIM, d2, sound, particle, cdTicks, getB } from "./core.js";
 import { setTarget, near, updateTag, wander } from "./workers.js";
 import { TIERS, useTool } from "./tools.js";
 
@@ -16,7 +16,14 @@ export function scanThreats(civ) {
   try {
     list = DIM().getEntities({ location: civ.center, maxDistance: THREAT_R, families: ["monster"] });
   } catch {}
-  civ._threats = list.filter((e) => !IGNORE.has(e.typeId));
+  const dim = DIM();
+  // Враги в воде (утопленники в озере) недостижимы — из-за них не поднимаем тревогу.
+  civ._threats = list.filter((e) => {
+    if (IGNORE.has(e.typeId)) return false;
+    const l = e.location;
+    const b = getB(dim, Math.floor(l.x), Math.floor(l.y), Math.floor(l.z));
+    return !b?.isLiquid;
+  });
 }
 
 /** Стражник: бьёт ближайшего врага, а если врагов нет — обходит поселение. */

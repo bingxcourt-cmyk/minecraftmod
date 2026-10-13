@@ -142,3 +142,32 @@ export function standY(dim, x, z) {
   const g = groundAt(dim, Math.floor(x), Math.floor(z));
   return g ? g.y + 1 : undefined;
 }
+
+/** Есть ли вода (или лава) в радиусе r блоков от точки — проверяем периметр квадрата через 2 блока. */
+export function waterNear(dim, x, z, r) {
+  for (let d = 1; d <= r; d += Math.max(1, Math.floor(r / 3))) {
+    for (let i = -d; i <= d; i += 2) {
+      for (const [px, pz] of [[x + i, z - d], [x + i, z + d], [x - d, z + i], [x + d, z + i]]) {
+        const g = groundAt(dim, px, pz);
+        if (g?.liquid) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Ближайшее сухое место (без воды в радиусе 6) в пределах maxR блоков. */
+export function findDrySpot(dim, cx, cz, maxR = 64) {
+  for (let r = 0; r <= maxR; r += 4) {
+    const n = Math.max(1, Math.floor(r * 1.5));
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2;
+      const x = Math.floor(cx + Math.cos(a) * r);
+      const z = Math.floor(cz + Math.sin(a) * r);
+      const g = groundAt(dim, x, z);
+      if (!g || g.liquid || g.unnatural || waterNear(dim, x, z, 6)) continue;
+      return { x, y: g.y + 1, z };
+    }
+  }
+  return undefined;
+}

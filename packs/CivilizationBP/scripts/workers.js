@@ -1,6 +1,6 @@
 import { BlockPermutation, EntityDamageCause, system } from "@minecraft/server";
 import { S, P, DIM, getB, getProp, setProp, dXZ, rnd, pick, markDirty, sound, particle, cdTicks, loaded } from "./core.js";
-import { isLog, isLeaves, isProtected, isPassableId, isNaturalGround, walkY, standY, strip } from "./blocks.js";
+import { isLog, isLeaves, isProtected, isPassableId, isNaturalGround, walkY, standY, strip, groundAt } from "./blocks.js";
 import { makeOps, cropCells, dims } from "./blueprints.js";
 import { findPath, findSafeSpot, rescueIfStuck } from "./nav.js";
 import { minerThink } from "./mine.js";
@@ -182,8 +182,9 @@ export function wander(civ, brain, r = 10) {
     const d = rnd(2, r);
     const x = civ.center.x + Math.cos(a) * d;
     const z = civ.center.z + Math.sin(a) * d;
-    const y = standY(DIM(), x, z);
-    brain.wander = y === undefined ? null : { x, y, z };
+    // Гуляют только по суше, в воду не заходят.
+    const g = groundAt(DIM(), Math.floor(x), Math.floor(z));
+    brain.wander = !g || g.liquid ? null : { x, y: g.y + 1, z };
   }
   if (brain.wander) setTarget(brain, brain.wander, 1.2);
 }

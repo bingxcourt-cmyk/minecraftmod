@@ -3,7 +3,7 @@ import { S, P, DIM, getProp, setProp, isNight, loadAll, saveAll, markDirty } fro
 import { brainOf, moveStep, think, resetTask, updateTag, resetPathBudget } from "./workers.js";
 import {
   assignRoles, searchTick, mineTick, hungerTick, growthTick, eraTick, colonyTick, colonyCheck,
-  settlerThink, completeProject, collapseCheck, foundingScan,
+  settlerThink, completeProject, collapseCheck, foundingScan, floodCheck,
 } from "./society.js";
 import { diplomacyTick, soldierThink, warBuffs, golemTick } from "./war.js";
 import { statusTick, onInteractBlock, onScriptEvent } from "./ui.js";
@@ -89,6 +89,7 @@ function everySecond() {
       // Напали мобы — сразу собираем ополчение.
       const hadThreat = (civ._threats ?? []).length > 0;
       scanThreats(civ);
+      if (S.clock % 30 === 7) floodCheck(civ);
       if (hadThreat !== civ._threats.length > 0) civ._reassign = true;
       if (civ._reassign || S.clock % 5 === 0) {
         civ._reassign = false;

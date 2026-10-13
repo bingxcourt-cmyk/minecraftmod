@@ -197,7 +197,7 @@ export function minerThink(civ, ent, brain, tick) {
   const m = civ.mine;
   if (!m) return wander(civ, brain, 8);
   const plan = minePlan(m);
-  if (m.idx >= plan.cells.length || (m.wet ?? 0) > 40) return finishMine(civ);
+  if (m.idx >= plan.cells.length || (m.wet ?? 0) > 12) return finishMine(civ);
   const dim = DIM();
   const cell = plan.cells[m.idx];
   const stand = standOf(m, plan, m.idx);
