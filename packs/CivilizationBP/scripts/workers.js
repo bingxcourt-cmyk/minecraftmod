@@ -5,12 +5,13 @@ import { makeOps, cropCells, dims } from "./blueprints.js";
 import { findPath, findSafeSpot, rescueIfStuck } from "./nav.js";
 import { minerThink } from "./mine.js";
 import { heldIndex } from "./held.js";
+import { guardThink } from "./defense.js";
 import { ERAS } from "./society.js";
 import { TOOL_FOR, TIERS, toolLabel, craftNeed, craft, useTool } from "./tools.js";
 
 export const ROLE_NAME = {
   lumberjack: "Лесоруб", miner: "Шахтёр", farmer: "Фермер", hunter: "Охотник", builder: "Строитель",
-  soldier: "Воин", settler: "Переселенец", child: "Ребёнок", golem: "Страж", "": "Житель",
+  soldier: "Воин", guard: "Стражник", settler: "Переселенец", child: "Ребёнок", golem: "Страж", "": "Житель",
 };
 
 // ---------- Мозг жителя ----------
@@ -49,7 +50,7 @@ export function updateTag(ent, brain, civ) {
   brain.heldIdx = heldIndex(ent, brain.role);
   const h = Number(getProp(ent, P.HUNGER) ?? 20);
   const hc = h <= 5 ? "§c" : h <= 12 ? "§e" : "§a";
-  const role = brain.role === "soldier" ? "§c" + ROLE_NAME.soldier : "§7" + (ROLE_NAME[brain.role] ?? "Житель");
+  const role = brain.role === "soldier" || brain.role === "guard" ? "§c" + ROLE_NAME[brain.role] : "§7" + (ROLE_NAME[brain.role] ?? "Житель");
   const tag = brain.role === "golem"
     ? `${civ.color}Страж ${civ.name}`
     : `${civ.color}${brain.name}§r\n${role} ${hc}Еда:${Math.round(h)}\n${toolLabel(ent, brain.role)}`;
@@ -118,7 +119,7 @@ export function moveStep(brain) {
   const dz = goal.z - p.z;
   const dist = Math.hypot(dx, dz);
   if (dist < 0.05) return;
-  const sp = (brain.role === "soldier" ? 0.36 : 0.3) * (brain.hungry ? 0.6 : 1);
+  const sp = (brain.role === "soldier" || brain.role === "guard" ? 0.36 : 0.3) * (brain.hungry ? 0.6 : 1);
   const step = Math.min(sp, dist);
   // Следим за продвижением: если житель долго не приближается к цели, он перебирается к ней.
   const td = dXZ(p, t);
@@ -705,6 +706,7 @@ export function think(civ, ent, brain, tick, hooks) {
     case "builder": return builder(civ, ent, brain, tick, hooks.onComplete);
     case "soldier":
     case "golem": return hooks.soldier(civ, ent, brain, tick);
+    case "guard": return guardThink(civ, ent, brain, tick);
     case "settler": return hooks.settler(civ, ent, brain, tick);
     case "child": return wander(civ, brain, 6);
     default: return wander(civ, brain, 8);

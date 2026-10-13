@@ -3,7 +3,7 @@ import { getProp, setProp, markDirty, sound, particle, DIM, playersNear } from "
 import { swinging } from "./held.js";
 
 // Какой инструмент нужен профессии.
-export const TOOL_FOR = { lumberjack: "axe", miner: "pickaxe", farmer: "hoe", hunter: "sword", soldier: "sword" };
+export const TOOL_FOR = { lumberjack: "axe", miner: "pickaxe", farmer: "hoe", hunter: "sword", soldier: "sword", guard: "sword" };
 export const TOOL_NAME = { axe: "топор", pickaxe: "кирка", hoe: "мотыга", sword: "меч" };
 
 // Уровни как у Стива: рука, дерево, камень, железо, алмаз.

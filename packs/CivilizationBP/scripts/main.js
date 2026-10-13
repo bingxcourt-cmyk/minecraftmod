@@ -11,9 +11,10 @@ import { rescueIfStuck } from "./nav.js";
 import { isActive, offscreenTick, materialize, takeCensus } from "./offscreen.js";
 import { whTick } from "./wh.js";
 import { heldTick, heldCleanup, dropHeld } from "./held.js";
+import { scanThreats } from "./defense.js";
 
 const hooks = { onComplete: completeProject, soldier: soldierThink, settler: settlerThink };
-const ALWAYS_AWAKE = new Set(["soldier", "golem", "settler"]);
+const ALWAYS_AWAKE = new Set(["soldier", "golem", "settler", "guard"]);
 
 /** Раз в секунду пересобирает списки жителей по цивилизациям. */
 function regroup() {
@@ -85,6 +86,10 @@ function everySecond() {
       if (civ.off && ((S.members.get(civ.id) ?? []).length > 0 && civ._activeFor >= 3 || civ._activeFor >= 15)) materialize(civ);
       if (civ.off) continue;
       if (S.clock % 5 === 0) takeCensus(civ);
+      // Напали мобы — сразу собираем ополчение.
+      const hadThreat = (civ._threats ?? []).length > 0;
+      scanThreats(civ);
+      if (hadThreat !== civ._threats.length > 0) civ._reassign = true;
       if (civ._reassign || S.clock % 5 === 0) {
         civ._reassign = false;
         assignRoles(civ);

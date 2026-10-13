@@ -3,7 +3,7 @@ import { ActionFormData } from "@minecraft/server-ui";
 import { S, dXZ, markDirty, saveAll, deleteCiv, DIM } from "./core.js";
 import { TYPES } from "./blueprints.js";
 import { projectOps, foodCap, ROLE_NAME, brainOf } from "./workers.js";
-import { ERAS, popOf, housingOf, newCiv, join } from "./society.js";
+import { ERAS, popOf, housingOf, newCiv, join, eraNeed } from "./society.js";
 import { declareWar } from "./war.js";
 import { whLine, whCommand, showWhForm } from "./wh.js";
 import { mineInfo } from "./mine.js";
@@ -54,6 +54,9 @@ export function statusTick() {
     ];
     if (war) lines.push(`§c§lВОЙНА§r§c с ${war.name}`);
     if (civ.starving) lines.push("§c§lГОЛОД!");
+    if ((civ._threats ?? []).length) lines.push(`§4Нападение! Врагов рядом: ${civ._threats.length}`);
+    const en = eraNeed(civ);
+    if (en) lines.push("§7" + en);
     if (wh) lines.push(wh);
     try {
       pl.onScreenDisplay.setActionBar(lines.join("\n"));
@@ -135,6 +138,7 @@ export function showCivForm(pl, civ) {
     `§lРесурсы:§r дерево ${r.wood}, камень ${r.stone}, еда ${r.food}/${foodCap(civ)}, железо ${r.iron}, алмазы ${r.diamond ?? 0}`,
     `§lИнструменты:§r ${toolSummary(civ)}`,
     `§lШахта:§r ${mineInfo(civ)}`,
+    eraNeed(civ),
     `§lРодилось:§r ${civ.born}  §lПогибло:§r ${civ.deaths}  §lПобед в боях:§r ${civ.kills}`,
     parent ? `§lМетрополия:§r ${parent.name}` : "",
     "",

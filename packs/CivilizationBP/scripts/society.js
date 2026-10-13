@@ -138,7 +138,7 @@ export function assignRoles(civ) {
     adults.push(e);
   }
   const n = adults.length;
-  const want = { soldier: 0, builder: 0, farmer: 0, hunter: 0, miner: 0, lumberjack: 0 };
+  const want = { soldier: 0, guard: 0, builder: 0, farmer: 0, hunter: 0, miner: 0, lumberjack: 0 };
   let left = n;
   const give = (role, k) => {
     const g = Math.max(0, Math.min(k, left));
@@ -148,6 +148,9 @@ export function assignRoles(civ) {
   const farms = count(civ, (b) => b.t.startsWith("farm"));
   const foodLow = civ.res.food < n * 3 + 5;
   if (civ.war && n >= 2) give("soldier", Math.max(1, Math.floor(n * 0.45)));
+  // Стражники с первой эпохи: 1 на 8 жителей, а при нападении мобов — ополчение до 30% жителей.
+  const threats = (civ._threats ?? []).length;
+  if (n >= 4) give("guard", Math.max(1, Math.floor(n / 8)) + (threats ? Math.min(threats * 2, Math.floor(n * 0.3)) : 0));
   const building = !!(civ.project || S.search.get(civ.id));
   if (building) give("builder", 1);
   // Стройка стоит без ресурса — первым делом его добывают.
@@ -249,9 +252,23 @@ export function growthTick(civ) {
 }
 
 // ---------- Эпохи ----------
+/** Что осталось сделать до следующей эпохи (для подсказки игроку). */
+export function eraNeed(civ) {
+  const era = ERAS[civ.era];
+  if (!era.next) return "";
+  const left = era.queue.slice(civ.qi).map((t) => TYPES[t].name);
+  const need = [];
+  if (left.length) need.push(`построить: ${left.join(", ")}`);
+  const n = era.next;
+  if (popOf(civ) < (n.pop ?? 0)) need.push(`жителей ${popOf(civ)}/${n.pop}`);
+  if (civ.res.stone < (n.stone ?? 0)) need.push(`камня ${civ.res.stone}/${n.stone}`);
+  if (civ.res.iron < (n.iron ?? 0)) need.push(`железа ${civ.res.iron}/${n.iron}`);
+  return `До эпохи «${ERAS[civ.era + 1].name}»: ${need.length ? need.join("; ") : "вот-вот"}`;
+}
+
 export function eraTick(civ) {
   const era = ERAS[civ.era];
-  if (!era.next || civ.qi < era.queue.length || civ.project) return;
+  if (!era.next || civ.qi < era.queue.length) return;
   const n = era.next;
   if (popOf(civ) < (n.pop ?? 0) || civ.res.stone < (n.stone ?? 0) || civ.res.iron < (n.iron ?? 0)) return;
   civ.era++;

@@ -50,7 +50,7 @@ export function heldTick() {
     // Вперёд и вправо относительно взгляда жителя; руки у него на уровне ~0.8 блока.
     const fx = -Math.sin(r);
     const fz = Math.cos(r);
-    const pos = { x: l.x + fx * 0.32 - fz * 0.28, y: l.y + 0.62, z: l.z + fz * 0.32 + fx * 0.28 };
+    const pos = { x: l.x + fx * 0.55 - fz * 0.3, y: l.y + 0.55, z: l.z + fz * 0.55 + fx * 0.3 };
     if (!b.held || !b.held.isValid) {
       try {
         b.held = dim.spawnEntity(ID, pos);
