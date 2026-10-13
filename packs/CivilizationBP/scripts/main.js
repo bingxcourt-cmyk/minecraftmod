@@ -1,12 +1,14 @@
 import { world, system } from "@minecraft/server";
 import { S, P, DIM, getProp, setProp, loaded, isNight, loadAll, saveAll, markDirty } from "./core.js";
-import { brainOf, moveStep, think, resetTask, updateTag } from "./workers.js";
+import { brainOf, moveStep, think, resetTask, updateTag, resetPathBudget } from "./workers.js";
 import {
   assignRoles, searchTick, quarryTick, hungerTick, growthTick, eraTick, colonyTick, colonyCheck,
   settlerThink, completeProject, collapseCheck, foundingScan,
 } from "./society.js";
 import { diplomacyTick, soldierThink, warBuffs, golemTick } from "./war.js";
 import { statusTick, onInteractBlock, onScriptEvent } from "./ui.js";
+import { rescueIfStuck } from "./nav.js";
+import { whTick } from "./wh.js";
 
 const hooks = { onComplete: completeProject, soldier: soldierThink, settler: settlerThink };
 const ALWAYS_AWAKE = new Set(["soldier", "golem", "settler"]);
@@ -139,7 +141,19 @@ function thinkAll() {
   }
 }
 
+// Застрял в блоке (саженец вырос, стена достроилась, телепорт неудачный) — выталкиваем, пока не задохнулся.
+function rescueAll() {
+  for (const b of S.brains.values()) {
+    const e = b.ent;
+    if (!e || !e.isValid) continue;
+    try {
+      if (rescueIfStuck(e)) b.path = null;
+    } catch {}
+  }
+}
+
 function moveAll() {
+  resetPathBudget(1);
   for (const b of S.brains.values()) {
     if (b.target && !b.resting) moveStep(b);
   }
@@ -188,6 +202,12 @@ function start() {
   system.runInterval(moveAll, 2);
   system.runInterval(thinkAll, 10);
   system.runInterval(everySecond, 20);
+  system.runInterval(rescueAll, 10);
+  system.runInterval(() => {
+    try {
+      whTick();
+    } catch {}
+  }, 10);
   world.afterEvents.entityDie.subscribe(onDeath, { entityTypes: ["minecraft:villager_v2", "minecraft:iron_golem"] });
   world.afterEvents.playerInteractWithBlock.subscribe(onInteractBlock);
   system.afterEvents.scriptEventReceive.subscribe(onScriptEvent, { namespaces: ["civ"] });

@@ -1,7 +1,9 @@
-import { BlockPermutation, EntityDamageCause } from "@minecraft/server";
+import { BlockPermutation, EntityDamageCause, system } from "@minecraft/server";
 import { S, P, DIM, getB, getProp, setProp, dXZ, rnd, pick, markDirty, sound, particle, cdTicks, loaded } from "./core.js";
 import { isLog, isLeaves, isStoneLike, isIronOre, isProtected, isPassableId, isNaturalGround, walkY, standY, strip } from "./blocks.js";
 import { makeOps, cropCells, dims } from "./blueprints.js";
+import { findPath, findSafeSpot, safeTeleport, rescueIfStuck } from "./nav.js";
+import { TOOL_FOR, TIERS, toolLabel, craftNeed, craft, useTool } from "./tools.js";
 
 export const ROLE_NAME = {
   lumberjack: "Лесоруб", miner: "Шахтёр", farmer: "Фермер", hunter: "Охотник", builder: "Строитель",
@@ -29,6 +31,7 @@ export function resetTask(brain) {
   brain.target = null;
   brain.wander = null;
   brain.sapling = null;
+  brain.path = null;
 }
 
 export function setRole(ent, brain, role, civ) {
@@ -45,7 +48,7 @@ export function updateTag(ent, brain, civ) {
   const role = brain.role === "soldier" ? "§c" + ROLE_NAME.soldier : "§7" + (ROLE_NAME[brain.role] ?? "Житель");
   const tag = brain.role === "golem"
     ? `${civ.color}Страж ${civ.name}`
-    : `${civ.color}${brain.name}§r\n${role} ${hc}Еда:${Math.round(h)}`;
+    : `${civ.color}${brain.name}§r\n${role} ${hc}Еда:${Math.round(h)}\n${toolLabel(ent, brain.role)}`;
   if (brain.tag === tag) return;
   brain.tag = tag;
   try {
@@ -66,36 +69,77 @@ export function near(ent, pos, reach, ignoreY) {
 }
 
 // ---------- Ходьба (вызывается каждые 2 тика) ----------
+// Поиск пути дорогой, поэтому за один вызов moveAll разрешаем не больше одного.
+let pathBudget = 0;
+export const resetPathBudget = (n) => (pathBudget = n);
+
+function requestPath(brain, p, t) {
+  if (pathBudget <= 0 || (brain.noPathUntil ?? 0) > system.currentTick) return false;
+  pathBudget--;
+  const pts = findPath(p, t, Math.max(1.2, brain.reach - 0.3));
+  if (!pts || !pts.length) {
+    brain.noPathUntil = system.currentTick + 60;
+    return false;
+  }
+  brain.path = { pts, i: 0, tx: t.x, tz: t.z };
+  return true;
+}
+
 export function moveStep(brain) {
   const ent = brain.ent;
   const t = brain.target;
   if (!t || !ent || !ent.isValid) return;
   const p = ent.location;
-  if (near(ent, t, brain.reach, brain.ignoreY)) return;
+  if (near(ent, t, brain.reach, brain.ignoreY)) {
+    brain.path = null;
+    return;
+  }
   const dim = DIM();
-  const dx = t.x - p.x;
-  const dz = t.z - p.z;
+  // Идём по найденному пути (в обход стен, через двери), если он есть.
+  let goal = t;
+  const path = brain.path;
+  let advanced = false;
+  if (path) {
+    if (Math.hypot(path.tx - t.x, path.tz - t.z) > 2.5) brain.path = null;
+    else {
+      while (path.i < path.pts.length && dXZ(p, path.pts[path.i]) < 0.4) {
+        path.i++;
+        advanced = true;
+      }
+      if (path.i >= path.pts.length) brain.path = null;
+      else goal = path.pts[path.i];
+    }
+  }
+  const dx = goal.x - p.x;
+  const dz = goal.z - p.z;
   const dist = Math.hypot(dx, dz);
   if (dist < 0.05) return;
   const sp = (brain.role === "soldier" ? 0.36 : 0.3) * (brain.hungry ? 0.6 : 1);
   const step = Math.min(sp, dist);
-  // Следим за продвижением: если житель долго не приближается к цели, он «перелезает» к ней.
+  // Следим за продвижением: если житель долго не приближается к цели, он перебирается к ней.
+  const td = dXZ(p, t);
   const pr = brain.prog;
   if (!pr || Math.hypot(t.x - pr.tx, t.z - pr.tz) > 3) {
-    brain.prog = { tx: t.x, tz: t.z, best: dist, n: 0 };
-  } else if (dist < pr.best - 0.1) {
-    pr.best = dist;
+    brain.prog = { tx: t.x, tz: t.z, best: td, n: 0 };
+  } else if (td < pr.best - 0.1 || advanced) {
+    pr.best = Math.min(pr.best, td);
     pr.n = 0;
-  } else if (++pr.n > 30) {
-    pr.n = 0;
-    pr.best = dist;
-    unstick(ent, brain, dim, t);
-    return;
+  } else {
+    pr.n++;
+    if (pr.n === 12 && !brain.path) requestPath(brain, p, t);
+    if (pr.n > 50) {
+      pr.n = 0;
+      pr.best = td;
+      brain.path = null;
+      unstick(ent, brain, dim, t);
+      return;
+    }
   }
   const allowDrop = t.y < p.y - 2;
   let nx = p.x + (dx / dist) * step;
   let nz = p.z + (dz / dist) * step;
   let ny = walkY(dim, nx, nz, p.y, allowDrop);
+  if (ny === undefined && !brain.path && requestPath(brain, p, t)) return;
   if (ny === undefined) {
     for (const s of brain.side === -1 ? [-1, 1] : [1, -1]) {
       const ax = p.x + (-dz / dist) * s * step;
@@ -111,19 +155,19 @@ export function moveStep(brain) {
   }
   if (ny === undefined) return;
   try {
-    ent.teleport({ x: nx, y: ny, z: nz }, { facingLocation: { x: t.x, y: ny + 1.5, z: t.z } });
+    ent.teleport({ x: nx, y: ny, z: nz }, { facingLocation: { x: goal.x, y: ny + 1.5, z: goal.z } });
   } catch {}
 }
 
 function unstick(ent, brain, dim, t) {
   if (!loaded(dim, t)) return;
-  const y = standY(dim, t.x, t.z);
-  if (y === undefined) return;
-  // Встаёт рядом с целью, а не прямо в стену или на крышу.
-  const y2 = brain.ignoreY || Math.abs(y - t.y) < 3 ? y : t.y;
+  // Перебирается на свободное место рядом с целью — не в стену, не в дерево.
+  const y = brain.ignoreY ? standY(dim, t.x, t.z) ?? t.y : t.y;
+  const spot = findSafeSpot(dim, t.x, y, t.z, 4);
+  if (!spot) return;
   try {
-    ent.teleport({ x: t.x, y: y2, z: t.z });
-    particle(dim, "minecraft:basic_smoke_particle", { x: t.x, y: y2 + 0.5, z: t.z });
+    ent.teleport(spot);
+    particle(dim, "minecraft:basic_smoke_particle", { x: spot.x, y: spot.y + 0.5, z: spot.z });
   } catch {}
 }
 
@@ -257,6 +301,10 @@ function growTree(dim, sp) {
     return false;
   }
   particle(dim, "minecraft:crop_growth_emitter", { x: sp.x + 0.5, y: sp.y + 1, z: sp.z + 0.5 });
+  // Если кто-то стоял на месте саженца — выталкиваем из ствола.
+  try {
+    for (const e of dim.getEntities({ location: { x: sp.x + 0.5, y: sp.y + 1, z: sp.z + 0.5 }, maxDistance: 3 })) rescueIfStuck(e);
+  } catch {}
   return true;
 }
 
@@ -314,7 +362,11 @@ function lumberjack(civ, ent, brain, tick) {
     return;
   }
   const b = getB(dim, pos.x, pos.y, pos.z);
+  let mult = 1;
   if (b && isLog(b.typeId)) {
+    const use = useTool(ent, "axe");
+    mult = use.mult;
+    if (use.broke) updateTag(ent, brain, civ);
     try {
       b.setType("minecraft:air");
       civ.res.wood += 3;
@@ -327,10 +379,12 @@ function lumberjack(civ, ent, brain, tick) {
   try {
     ent.teleport(ent.location, { facingLocation: { x: pos.x + 0.5, y: pos.y + 0.5, z: pos.z + 0.5 } });
   } catch {}
-  brain.cd = tick + cdTicks(14, brain);
+  brain.cd = tick + cdTicks(14 * mult, brain);
 }
 
 // ---------- Шахтёр ----------
+const isDiamondOre = (id) => id === "minecraft:diamond_ore" || id === "minecraft:deepslate_diamond_ore";
+
 function miner(civ, ent, brain, tick) {
   const q = civ.quarry;
   if (!q) return wander(civ, brain, 8);
@@ -339,11 +393,8 @@ function miner(civ, ent, brain, tick) {
   setTarget(brain, mid, 3.5, true);
   if (!near(ent, mid, 3.8, true)) return;
   // Спускается в яму к текущему слою.
-  if (Math.abs(ent.location.y - (q.y + 1)) > 2.5) {
-    try {
-      ent.teleport({ x: mid.x, y: q.y + 1, z: mid.z });
-    } catch {}
-  }
+  if (Math.abs(ent.location.y - (q.y + 1)) > 2.5) safeTeleport(ent, { x: mid.x, y: q.y + 1, z: mid.z }, 2);
+  let mult = 1;
   for (let checks = 0; checks < 30; checks++) {
     if (q.ci >= 25) {
       q.y--;
@@ -374,11 +425,18 @@ function miner(civ, ent, brain, tick) {
       continue;
     }
     q.ci++;
-    if (isIronOre(id)) civ.res.iron += 1;
-    else if (isStoneLike(id)) {
+    // Как у Стива: железо — только каменной киркой и лучше, алмазы — железной и лучше.
+    const use = useTool(ent, "pickaxe");
+    mult = use.mult;
+    if (use.broke) updateTag(ent, brain, civ);
+    if (isIronOre(id)) {
+      if (use.tier >= 2) civ.res.iron += 1;
+    } else if (isDiamondOre(id)) {
+      if (use.tier >= 3) civ.res.diamond = (civ.res.diamond ?? 0) + 1;
+    } else if (isStoneLike(id)) {
       civ.res.stone += 1;
       // Глубоко в камне попадаются железные жилы.
-      if (q.depth >= 4 && Math.random() < 0.03) civ.res.iron += 1;
+      if (use.tier >= 2 && q.depth >= 4 && Math.random() < 0.03) civ.res.iron += 1;
     } else if (isLog(id)) civ.res.wood += 3;
     markDirty(civ);
     sound(dim, "dig.stone", { x, y: q.y, z });
@@ -388,7 +446,7 @@ function miner(civ, ent, brain, tick) {
     } catch {}
     break;
   }
-  brain.cd = tick + cdTicks(22, brain);
+  brain.cd = tick + cdTicks(22 * mult, brain);
 }
 
 function finishQuarry(civ) {
@@ -424,6 +482,8 @@ function farmer(civ, ent, brain, tick) {
   const below = getB(dim, c.x, c.y - 1, c.z);
   const b = getB(dim, c.x, c.y, c.z);
   if (!b || !below) return;
+  const use = useTool(ent, "hoe");
+  if (use.broke) updateTag(ent, brain, civ);
   try {
     if (below.typeId !== "minecraft:farmland") {
       if (!isNaturalGround(below.typeId)) return;
@@ -444,7 +504,7 @@ function farmer(civ, ent, brain, tick) {
       b.setPermutation(BlockPermutation.resolve("minecraft:wheat", { growth: 0 }));
     }
   } catch {}
-  brain.cd = tick + cdTicks(24, brain);
+  brain.cd = tick + cdTicks(24 * use.mult, brain);
 }
 
 // ---------- Охотник ----------
@@ -499,8 +559,10 @@ function hunter(civ, ent, brain, tick) {
   setTarget(brain, prey.location, 1.4);
   if (!near(ent, prey.location, 2.2, false)) return;
   const value = PREY[prey.typeId] ?? 2;
+  const use = useTool(ent, "sword");
+  if (use.broke) updateTag(ent, brain, civ);
   try {
-    prey.applyDamage(5, { cause: EntityDamageCause.entityAttack, damagingEntity: ent });
+    prey.applyDamage(TIERS[use.tier].dmg + 1, { cause: EntityDamageCause.entityAttack, damagingEntity: ent });
   } catch {}
   sound(DIM(), "game.player.attack.strong", prey.location);
   const hp = prey.isValid ? prey.getComponent("minecraft:health") : undefined;
@@ -581,8 +643,9 @@ function liftOut(dim, op) {
     if (Math.floor(l.x) !== op.x || Math.floor(l.z) !== op.z) continue;
     const fy = Math.floor(l.y);
     if (fy !== op.y && fy !== op.y - 1) continue;
+    const spot = findSafeSpot(dim, l.x, op.y + 1, l.z, 3);
     try {
-      e.teleport({ x: l.x, y: op.y + 1, z: l.z });
+      if (spot) e.teleport(spot);
     } catch {}
   }
 }
@@ -657,7 +720,43 @@ function builder(civ, ent, brain, tick, onComplete) {
 }
 
 // ---------- Диспетчер ----------
+// Житель идёт к верстаку в центре поселения и делает себе инструмент из общих запасов.
+// Остаток ресурсов на стройку пересчитываем не чаще раза в секунду.
+function reserveOf(civ) {
+  const c = civ._reserve;
+  if (c && system.currentTick - c.at < 20) return c.need;
+  const need = remainingCost(civ);
+  // Пока нет центра, бережём стартовые запасы на него.
+  if (!civ.buildings.length) {
+    need.stone = Math.max(need.stone, 12);
+    need.wood = Math.max(need.wood, 12);
+  }
+  civ._reserve = { at: system.currentTick, need };
+  return need;
+}
+
+function crafting(civ, ent, brain, tick) {
+  const reserve = reserveOf(civ);
+  const kind = craftNeed(civ, ent, brain.role, reserve);
+  if (!kind) {
+    brain.crafting = false;
+    return false;
+  }
+  if (civ.buildings.some((b) => b.t === "center")) {
+    if (!brain.crafting) resetTask(brain);
+    brain.crafting = true;
+    setTarget(brain, civ.center, 2.5, true);
+    if (!near(ent, civ.center, 3.2, true)) return true;
+  }
+  craft(civ, ent, kind, reserve);
+  brain.crafting = false;
+  updateTag(ent, brain, civ);
+  brain.cd = tick + cdTicks(30, brain);
+  return true;
+}
+
 export function think(civ, ent, brain, tick, hooks) {
+  if (TOOL_FOR[brain.role] && crafting(civ, ent, brain, tick)) return;
   switch (brain.role) {
     case "lumberjack": return lumberjack(civ, ent, brain, tick);
     case "miner": return miner(civ, ent, brain, tick);

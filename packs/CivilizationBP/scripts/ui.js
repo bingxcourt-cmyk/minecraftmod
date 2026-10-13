@@ -5,6 +5,8 @@ import { TYPES } from "./blueprints.js";
 import { projectOps, foodCap, ROLE_NAME, brainOf } from "./workers.js";
 import { ERAS, popOf, housingOf, newCiv, join } from "./society.js";
 import { declareWar } from "./war.js";
+import { whLine, whCommand, showWhForm } from "./wh.js";
+import { TOOL_FOR, TIERS, toolTier } from "./tools.js";
 
 export function nearestCiv(p, maxDist) {
   let best;
@@ -33,16 +35,25 @@ export function statusTick() {
   for (const pl of world.getAllPlayers()) {
     if (pl.dimension.id !== "minecraft:overworld") continue;
     const civ = nearestCiv(pl.location, 72);
-    if (!civ) continue;
+    const wh = whLine(pl);
+    if (!civ) {
+      if (wh) {
+        try {
+          pl.onScreenDisplay.setActionBar(wh);
+        } catch {}
+      }
+      continue;
+    }
     const r = civ.res;
     const war = civ.war ? S.civs.get(civ.war.enemy) : undefined;
     const lines = [
       `${civ.color}§l${civ.name}§r §7— ${ERAS[civ.era].name}`,
-      `§fЖители: ${popOf(civ)}/${housingOf(civ)}  §6Еда: ${r.food}/${foodCap(civ)}  §2Дерево: ${r.wood}  §7Камень: ${r.stone}  §fЖелезо: ${r.iron}`,
+      `§fЖители: ${popOf(civ)}/${housingOf(civ)}  §6Еда: ${r.food}/${foodCap(civ)}  §2Дерево: ${r.wood}  §7Камень: ${r.stone}  §fЖелезо: ${r.iron}${r.diamond ? `  §bАлмазы: ${r.diamond}` : ""}`,
       projectLine(civ),
     ];
     if (war) lines.push(`§c§lВОЙНА§r§c с ${war.name}`);
     if (civ.starving) lines.push("§c§lГОЛОД!");
+    if (wh) lines.push(wh);
     try {
       pl.onScreenDisplay.setActionBar(lines.join("\n"));
     } catch {}
@@ -58,6 +69,19 @@ function roleSummary(civ) {
   return Object.entries(counts)
     .map(([r, n]) => `${ROLE_NAME[r] ?? r}: ${n}`)
     .join(", ");
+}
+
+function toolSummary(civ) {
+  const counts = [0, 0, 0, 0, 0];
+  let workers = 0;
+  for (const e of S.members.get(civ.id) ?? []) {
+    const kind = TOOL_FOR[brainOf(e, civ.id).role];
+    if (!kind) continue;
+    workers++;
+    counts[toolTier(e, kind)]++;
+  }
+  if (!workers) return "—";
+  return TIERS.map((t, i) => (counts[i] ? `${i ? t.name : "без инструмента"}: ${counts[i]}` : "")).filter(Boolean).join(", ");
 }
 
 function relations(civ) {
@@ -107,7 +131,8 @@ export function showCivForm(pl, civ) {
     `§lЖители:§r ${popOf(civ)} (мест в домах: ${housingOf(civ)})`,
     `§lПрофессии:§r ${roleSummary(civ) || "—"}`,
     `§lПостроек:§r ${civ.buildings.filter((b) => b.t !== "quarry").length}`,
-    `§lРесурсы:§r дерево ${r.wood}, камень ${r.stone}, еда ${r.food}/${foodCap(civ)}, железо ${r.iron}`,
+    `§lРесурсы:§r дерево ${r.wood}, камень ${r.stone}, еда ${r.food}/${foodCap(civ)}, железо ${r.iron}, алмазы ${r.diamond ?? 0}`,
+    `§lИнструменты:§r ${toolSummary(civ)}`,
     `§lРодилось:§r ${civ.born}  §lПогибло:§r ${civ.deaths}  §lПобед в боях:§r ${civ.kills}`,
     parent ? `§lМетрополия:§r ${parent.name}` : "",
     "",
@@ -120,10 +145,12 @@ export function showCivForm(pl, civ) {
     .title(`${civ.color}${civ.name}`)
     .body(body.join("\n"))
     .button("Подарить ресурсы из инвентаря")
+    .button("ВХ на профессии")
     .button("Закрыть")
     .show(pl)
     .then((res) => {
       if (res.selection === 0) donate(pl, civ);
+      if (res.selection === 1) showWhForm(pl);
     })
     .catch(() => {});
 }
@@ -197,7 +224,11 @@ export function onScriptEvent(ev) {
       saveAll(true);
       return say("§cВсе цивилизации удалены.");
     }
+    case "civ:wh": {
+      if (!pl || pl.typeId !== "minecraft:player") return say("§cКоманду должен выполнить игрок.");
+      return whCommand(pl, ev.message);
+    }
     default:
-      if (ev.id.startsWith("civ:")) say("§7Команды: civ:info, civ:speed <x>, civ:found, civ:war, civ:peace, civ:res, civ:reset");
+      if (ev.id.startsWith("civ:")) say("§7Команды: civ:info, civ:speed <x>, civ:found, civ:war, civ:peace, civ:res, civ:reset, civ:wh <профессия|all|off>");
   }
 }

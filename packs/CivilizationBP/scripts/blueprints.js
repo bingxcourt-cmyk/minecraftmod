@@ -84,6 +84,7 @@ function center() {
   b.box(0, 0, 0, 4, 0, 4, "grass_path");
   b.box(1, 0, 1, 3, 0, 3, "cobblestone");
   b.set(2, 1, 2, "bell", undefined, {});
+  b.set(2, 1, 3, "crafting_table");
   for (const [x, z] of [[0, 0], [4, 0], [0, 4], [4, 4]]) {
     b.set(x, 1, z, "oak_fence");
     b.set(x, 2, z, "oak_fence");

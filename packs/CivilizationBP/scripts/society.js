@@ -6,6 +6,7 @@ import {
 import { groundAt, standY } from "./blocks.js";
 import { TYPES, getBP, dims, doorFront, toWorld } from "./blueprints.js";
 import { brainOf, setRole, updateTag, resetTask, remainingCost } from "./workers.js";
+import { findSafeSpot, safeTeleport } from "./nav.js";
 
 export const ERAS = [
   { name: "Племя", queue: ["center", "farm_small", "hut", "hut", "well"], next: { pop: 4, stone: 10 } },
@@ -142,6 +143,9 @@ export function assignRoles(civ) {
   if (civ.war && n >= 2) give("soldier", Math.max(1, Math.floor(n * 0.45)));
   const building = !!(civ.project || S.search.get(civ.id));
   if (building) give("builder", 1);
+  // Стройка стоит без ресурса — первым делом его добывают.
+  if (civ.waiting === "камень") give("miner", 1);
+  if (civ.waiting === "дерево") give("lumberjack", 1);
   if (farms > 0) give("farmer", 1);
   if (farms === 0 || foodLow) give("hunter", 1);
   // Шахтёры нужны, пока не хватает камня или железа; остальные рубят лес.
@@ -219,19 +223,21 @@ export function growthTick(civ) {
   if (pop >= housingOf(civ) || civ.res.food < 10 + pop) return;
   const dim = DIM();
   const homes = civ.buildings.filter((b) => getBP(b.t).beds > 0);
-  const spot = homes.length ? doorFront(pick(homes)) : civ.center;
-  const y = standY(dim, spot.x + 0.5, spot.z + 0.5);
-  if (y === undefined) return;
+  const door = homes.length ? doorFront(pick(homes)) : civ.center;
+  // Новорождённый появляется только на свободном месте, а не внутри стены.
+  const spot = findSafeSpot(dim, door.x + 0.5, (standY(dim, door.x + 0.5, door.z + 0.5) ?? door.y + 1), door.z + 0.5, 4);
+  if (!spot) return;
+  const y = spot.y;
   let v;
   try {
-    v = dim.spawnEntity("minecraft:villager_v2", { x: spot.x + 0.5, y, z: spot.z + 0.5 });
+    v = dim.spawnEntity("minecraft:villager_v2", spot);
   } catch {
     return;
   }
   civ.res.food -= 8;
   civ.born++;
   join(civ, v);
-  particle(dim, "minecraft:heart_particle", { x: spot.x + 0.5, y: y + 1.5, z: spot.z + 0.5 });
+  particle(dim, "minecraft:heart_particle", { x: spot.x, y: y + 1.5, z: spot.z });
   for (const pl of playersNear(civ.center, 64)) pl.sendMessage(`§d[${civ.name}] Родился новый житель: ${getProp(v, P.NAME)}`);
 }
 
@@ -351,7 +357,7 @@ export function searchTick(civ) {
 }
 
 export function quarryTick(civ) {
-  if (civ.quarry || civ.buildings.length === 0) return;
+  if (civ.quarry) return;
   if (!(S.members.get(civ.id) ?? []).some((e) => brainOf(e, civ.id).role === "miner")) return;
   let s = S.qsearch.get(civ.id);
   if (!s) {
@@ -483,7 +489,7 @@ export function colonyCheck(civ) {
   civ._reassign = true;
   for (const e of settlers) {
     try {
-      if (dXZ(e.location, c) > 10) e.teleport({ x: c.x, y: c.y, z: c.z });
+      if (dXZ(e.location, c) > 10) safeTeleport(e, c, 4);
     } catch {}
     const list = S.members.get(civ.id) ?? [];
     const i = list.indexOf(e);

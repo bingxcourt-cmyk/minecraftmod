@@ -1,7 +1,8 @@
 import { world, EntityDamageCause } from "@minecraft/server";
 import { S, DIM, d2, dXZ, rnd, markDirty, sound, particle, loaded, playersNear, cdTicks } from "./core.js";
 import { standY } from "./blocks.js";
-import { setTarget, near } from "./workers.js";
+import { setTarget, near, updateTag } from "./workers.js";
+import { TIERS, useTool } from "./tools.js";
 import { has, popOf } from "./society.js";
 
 const WAR_DIST = 170;
@@ -108,9 +109,12 @@ export function diplomacyTick() {
   }
 }
 
-function damageOf(civ, brain) {
+// Урон воина зависит от меча (как у Стива) и от казарм/эпохи.
+function damageOf(civ, brain, ent) {
   if (brain.role === "golem") return 10;
-  return 2 + civ.era + (has(civ, "smithy") ? 1 : 0) + (has(civ, "barracks") ? 1 : 0);
+  const use = useTool(ent, "sword");
+  if (use.broke) updateTag(ent, brain, civ);
+  return TIERS[use.tier].dmg + Math.floor(civ.era / 2) + (has(civ, "barracks") ? 1 : 0);
 }
 
 export function soldierThink(civ, ent, brain, tick) {
@@ -135,7 +139,7 @@ export function soldierThink(civ, ent, brain, tick) {
     setTarget(brain, best.location, 1.3);
     if (near(ent, best.location, 2.3, false)) {
       try {
-        best.applyDamage(damageOf(civ, brain), { cause: EntityDamageCause.entityAttack, damagingEntity: ent });
+        best.applyDamage(damageOf(civ, brain, ent), { cause: EntityDamageCause.entityAttack, damagingEntity: ent });
       } catch {}
       sound(dim, "game.player.attack.strong", best.location);
       particle(dim, "minecraft:critical_hit_emitter", { x: best.location.x, y: best.location.y + 1, z: best.location.z });
