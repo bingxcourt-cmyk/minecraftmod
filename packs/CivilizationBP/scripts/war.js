@@ -4,7 +4,7 @@ import { standY } from "./blocks.js";
 import { setTarget, near, updateTag } from "./workers.js";
 import { TIERS, useTool } from "./tools.js";
 import { abstractBattle } from "./offscreen.js";
-import { has, popOf } from "./society.js";
+import { has, popOf, count } from "./society.js";
 
 const WAR_DIST = 170;
 
@@ -76,7 +76,7 @@ export function diplomacyTick() {
     if (dist > WAR_DIST) continue;
     if ((a.peace[b.id] ?? 0) > S.clock || a.war || b.war) continue;
     // Враждуют только окрепшие поселения.
-    if (popOf(a) < 4 || popOf(b) < 4 || a.buildings.length < 3 || b.buildings.length < 3) continue;
+    if (popOf(a) < 4 || popOf(b) < 4 || count(a, () => true) < 3 || count(b, () => true) < 3) continue;
     let t = (a.tension[b.id] ?? 0) + 1 + rnd(0, 2);
     if (dist < 100) t += 1;
     if (a.starving || b.starving) t += 8;

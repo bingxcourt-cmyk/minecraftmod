@@ -485,10 +485,16 @@ function layRoad(from, to) {
 }
 
 // ---------- Колонии ----------
+// Больше цивилизаций не основывается — бережём производительность телефона.
+export const MAX_CIVS = 20;
+// Одно поселение отправляет не больше 3 колоний, не чаще раза в 25 минут, при 15+ жителях.
+export const MAX_COLONIES = 3;
+
 export function colonyTick(civ) {
   if (civ.colony) return;
   const members = S.members.get(civ.id) ?? [];
-  if (civ.war || civ.era < 1 || members.length < 12 || civ.res.food < 30 || S.clock < civ.colonyAt) return;
+  if (civ.war || civ.era < 1 || members.length < 15 || civ.res.food < 30 || S.clock < civ.colonyAt) return;
+  if ((civ.coloniesFounded ?? 0) >= MAX_COLONIES) return;
   const dim = DIM();
   let dest;
   for (let i = 0; i < 12 && !dest; i++) {
@@ -496,17 +502,18 @@ export function colonyTick(civ) {
     const d = rnd(70, 100);
     const p = { x: Math.floor(civ.center.x + Math.cos(a) * d), z: Math.floor(civ.center.z + Math.sin(a) * d) };
     if (!loaded(dim, p)) continue;
-    if ([...S.civs.values()].some((c) => dXZ(c.center, p) < 60)) continue;
+    if (S.civs.size >= MAX_CIVS || [...S.civs.values()].some((c) => dXZ(c.center, p) < 60)) continue;
     const g = groundAt(dim, p.x, p.z);
     if (!g || g.liquid) continue;
     dest = { x: p.x, y: g.y + 1, z: p.z };
   }
-  civ.colonyAt = S.clock + 900;
+  civ.colonyAt = S.clock + Math.round(1500 / S.speed);
   markDirty(civ);
   if (!dest) return;
-  const settlers = members.filter((e) => ["lumberjack", "hunter", "miner"].includes(brainOf(e, civ.id).role)).slice(0, 3);
-  if (settlers.length < 3) return;
+  const settlers = members.filter((e) => ["lumberjack", "hunter", "miner", "farmer"].includes(brainOf(e, civ.id).role)).slice(0, 4);
+  if (settlers.length < 4) return;
   civ.colony = { ...dest, ids: settlers.map((e) => e.id), since: S.clock };
+  civ.coloniesFounded = (civ.coloniesFounded ?? 0) + 1;
   for (const e of settlers) setRole(e, brainOf(e, civ.id), "settler", civ);
   announce(civ, `§b[${civ.name}] Переселенцы отправились основать новую колонию!`, 160);
 }

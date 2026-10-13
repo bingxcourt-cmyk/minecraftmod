@@ -2,7 +2,8 @@ import { world } from "@minecraft/server";
 import { S, DIM, loaded, playersNear, markDirty, personName, P, setProp } from "./core.js";
 import { TIERS, TOOL_FOR, toolTier, bestCraftable } from "./tools.js";
 import { TYPES, getBP } from "./blueprints.js";
-import { popOf, housingOf, chooseNext, count, has, join, eraTick, noteBuilt } from "./society.js";
+import { popOf, housingOf, chooseNext, count, has, join, eraTick, noteBuilt, newCiv, MAX_CIVS, MAX_COLONIES } from "./society.js";
+import { groundAt } from "./blocks.js";
 import { brainOf, foodCap, remainingCost } from "./workers.js";
 import { findSafeSpot } from "./nav.js";
 
@@ -202,18 +203,79 @@ export function offscreenTick(civ, dt) {
     }
   }
   eraTick(civ);
+  colonyOffscreen(civ, pop);
   markDirty(civ);
+}
+
+/**
+ * Колония без игрока: 4 жителя уходят на 70–100 блоков и основывают новое поселение.
+ * Рельеф там неизвестен — точное место (суша, высота) уточнится, когда игрок придёт.
+ */
+function colonyOffscreen(civ, pop) {
+  if (civ.war || civ.era < 1 || pop < 15 || civ.res.food < 30 || S.clock < (civ.colonyAt ?? 0)) return;
+  if ((civ.coloniesFounded ?? 0) >= MAX_COLONIES) return;
+  civ.colonyAt = S.clock + Math.round(1500 / S.speed);
+  if (S.civs.size >= MAX_CIVS) return;
+  let dest;
+  for (let i = 0; i < 12 && !dest; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const d = 70 + Math.random() * 30;
+    const p = { x: Math.floor(civ.center.x + Math.cos(a) * d), y: civ.center.y, z: Math.floor(civ.center.z + Math.sin(a) * d) };
+    if ([...S.civs.values()].some((c) => Math.hypot(c.center.x - p.x, c.center.z - p.z) < 60)) continue;
+    // Колонию не основывают прямо рядом с игроком — там её бы увидели «из ниоткуда».
+    if (playersNear(p, activeR() + 16).length) continue;
+    dest = p;
+  }
+  if (!dest) return;
+  const colony = newCiv(dest, civ.id);
+  colony._active = false;
+  colony.virtualCenter = true;
+  colony.census = { pop: 4, roles: {}, tiers: { ...(civ.census?.tiers ?? {}) } };
+  offOf(colony);
+  const give = { wood: Math.min(40, civ.res.wood), stone: Math.min(15, civ.res.stone), food: Math.min(25, civ.res.food) };
+  for (const k in give) civ.res[k] -= give[k];
+  colony.res = { ...give, iron: 0 };
+  offOf(civ).pop -= 4;
+  civ.coloniesFounded = (civ.coloniesFounded ?? 0) + 1;
+  offOf(civ).colonies = (offOf(civ).colonies ?? 0) + 1;
+  civ.tension[colony.id] = 35;
+  colony.tension[civ.id] = 35;
+  markDirty(colony);
+  world.sendMessage(`§b[Цивилизации] Переселенцы из ${civ.color}${civ.name}§b основали колонию ${colony.color}§l${colony.name}§r§b (координаты ${dest.x}, ${dest.z}).`);
+}
+
+// Центр колонии, основанной вдали, ставим на настоящую сушу, когда чанк загрузился.
+function fixCenter(civ) {
+  if (!civ.virtualCenter) return;
+  const dim = DIM();
+  for (let r = 0; r <= 32; r += 4) {
+    for (let k = 0; k < Math.max(1, r * 2); k++) {
+      const a = (k / Math.max(1, r * 2)) * Math.PI * 2;
+      const x = Math.floor(civ.center.x + Math.cos(a) * r);
+      const z = Math.floor(civ.center.z + Math.sin(a) * r);
+      const g = groundAt(dim, x, z);
+      if (!g || g.liquid) continue;
+      civ.center = { x, y: g.y + 1, z };
+      civ.virtualCenter = false;
+      return;
+    }
+  }
+  civ.virtualCenter = false;
 }
 
 /** Игрок вернулся: появляются родившиеся, исчезают умершие, выводится сводка. */
 export function materialize(civ) {
   const off = civ.off;
   if (!off) return;
+  fixCenter(civ);
+  const target = Math.max(0, (civ.census?.pop ?? 0) + off.pop);
   civ.off = null;
   const members = S.members.get(civ.id) ?? [];
   const dim = DIM();
-  if (off.pop > 0) {
-    for (let i = 0; i < Math.min(off.pop, 15); i++) {
+  // Сколько жителей должно быть по фоновой симуляции против тех, что есть на самом деле.
+  const diff = target - members.length;
+  if (diff > 0) {
+    for (let i = 0; i < Math.min(diff, 40); i++) {
       const spot = findSafeSpot(dim, civ.center.x + (Math.random() * 6 - 3), civ.center.y, civ.center.z + (Math.random() * 6 - 3), 5);
       if (!spot) break;
       try {
@@ -222,8 +284,8 @@ export function materialize(civ) {
         join(civ, v);
       } catch {}
     }
-  } else if (off.pop < 0) {
-    const victims = members.filter((e) => brainOf(e, civ.id).role !== "golem").slice(0, -off.pop);
+  } else if (diff < 0) {
+    const victims = members.filter((e) => brainOf(e, civ.id).role !== "golem").slice(0, -diff);
     for (const e of victims) {
       S.brains.delete(e.id);
       try {
@@ -235,6 +297,7 @@ export function materialize(civ) {
   const parts = [];
   if (off.born) parts.push(`родилось ${off.born}`);
   if (off.died) parts.push(`умерло ${off.died}`);
+  if (off.colonies) parts.push(`ушли основывать колонии: ${off.colonies * 4} жит.`);
   parts.push(`добыто: дерево ${g.wood}, камень ${g.stone}, железо ${g.iron}${g.diamond ? `, алмазы ${g.diamond}` : ""}`);
   if (off.built.length) parts.push(`построено: ${off.built.join(", ")} (появится по мере возведения)`);
   const msg = `§b[${civ.name}] Пока вас не было (${Math.round(off.mins)} мин): ${parts.join("; ")}.`;
