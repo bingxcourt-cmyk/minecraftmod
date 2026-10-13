@@ -10,6 +10,7 @@ export const S = {
   clock: 0, // секунды симуляции (сохраняются)
   speed: 1, // множитель скорости работы
   nightWork: true, // работают ли мирные жители ночью
+  activeChunks: 7, // радиус «живой» симуляции вокруг игрока, в чанках
   dirty: new Set(),
   search: new Map(), // civId -> поиск места под постройку
   qsearch: new Map(), // civId -> поиск места под карьер
@@ -130,6 +131,7 @@ export function saveAll(force = false) {
     world.setDynamicProperty("civ:clock", S.clock);
     world.setDynamicProperty("civ:speed", S.speed);
     world.setDynamicProperty("civ:night", S.nightWork ? "work" : "rest");
+    world.setDynamicProperty("civ:radius", S.activeChunks);
   } catch {}
 }
 
@@ -148,6 +150,7 @@ export function loadAll() {
   S.clock = Number(world.getDynamicProperty("civ:clock") ?? 0);
   S.speed = Number(world.getDynamicProperty("civ:speed") ?? 1) || 1;
   S.nightWork = world.getDynamicProperty("civ:night") !== "rest";
+  S.activeChunks = Number(world.getDynamicProperty("civ:radius") ?? 7) || 7;
 }
 
 export function deleteCiv(civ) {

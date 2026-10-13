@@ -1,5 +1,5 @@
 import { world, system } from "@minecraft/server";
-import { S, P, DIM, getProp, setProp, loaded, isNight, loadAll, saveAll, markDirty } from "./core.js";
+import { S, P, DIM, getProp, setProp, isNight, loadAll, saveAll, markDirty } from "./core.js";
 import { brainOf, moveStep, think, resetTask, updateTag, resetPathBudget } from "./workers.js";
 import {
   assignRoles, searchTick, mineTick, hungerTick, growthTick, eraTick, colonyTick, colonyCheck,
@@ -8,6 +8,7 @@ import {
 import { diplomacyTick, soldierThink, warBuffs, golemTick } from "./war.js";
 import { statusTick, onInteractBlock, onScriptEvent } from "./ui.js";
 import { rescueIfStuck } from "./nav.js";
+import { isActive, offscreenTick, materialize, takeCensus } from "./offscreen.js";
 import { whTick } from "./wh.js";
 
 const hooks = { onComplete: completeProject, soldier: soldierThink, settler: settlerThink };
@@ -64,12 +65,24 @@ function regroup() {
 function everySecond() {
   S.clock++;
   regroup();
-  const dim = DIM();
   const slow = Math.max(5, Math.round(30 / S.speed));
   for (const civ of [...S.civs.values()]) {
     try {
+      const wasActive = civ._active;
+      civ._active = isActive(civ);
       if (collapseCheck(civ)) continue;
-      if (!loaded(dim, civ.center)) continue;
+      if (!civ._active) {
+        // Далеко от игрока — фоновая симуляция раз в 10 секунд.
+        civ._activeFor = 0;
+        if (S.clock % 10 === 0) offscreenTick(civ, 10);
+        continue;
+      }
+      if (wasActive === false) civ._activeFor = 0;
+      civ._activeFor = (civ._activeFor ?? 0) + 1;
+      // Игрок вернулся: ждём, пока подгрузятся жители, и применяем итоги фоновой симуляции.
+      if (civ.off && ((S.members.get(civ.id) ?? []).length > 0 && civ._activeFor >= 3 || civ._activeFor >= 15)) materialize(civ);
+      if (civ.off) continue;
+      if (S.clock % 5 === 0) takeCensus(civ);
       if (civ._reassign || S.clock % 5 === 0) {
         civ._reassign = false;
         assignRoles(civ);
@@ -119,7 +132,8 @@ function thinkAll() {
     const e = b.ent;
     if (!e || !e.isValid) continue;
     const civ = S.civs.get(b.civId);
-    if (!civ) continue;
+    // Поселения вдали от игрока считаются по формулам, их жители стоят.
+    if (!civ || civ._active === false || civ.off) continue;
     if (night && !S.nightWork && !ALWAYS_AWAKE.has(b.role)) {
       // Режим «ночью спят»: мирные жители отдыхают.
       b.target = null;
@@ -155,7 +169,7 @@ function rescueAll() {
 function moveAll() {
   resetPathBudget(system.currentTick % 4 === 0 ? 1 : 0);
   for (const b of S.brains.values()) {
-    if (b.target && !b.resting) moveStep(b);
+    if (b.target && !b.resting && S.civs.get(b.civId)?._active !== false) moveStep(b);
   }
 }
 

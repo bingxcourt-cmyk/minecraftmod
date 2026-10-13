@@ -3,6 +3,7 @@ import { S, DIM, d2, dXZ, rnd, markDirty, sound, particle, loaded, playersNear, 
 import { standY } from "./blocks.js";
 import { setTarget, near, updateTag } from "./workers.js";
 import { TIERS, useTool } from "./tools.js";
+import { abstractBattle } from "./offscreen.js";
 import { has, popOf } from "./society.js";
 
 const WAR_DIST = 170;
@@ -99,6 +100,8 @@ export function diplomacyTick() {
       continue;
     }
     if (civ.id > enemy.id) continue;
+    // Хотя бы одна армия далеко от игрока — сражение считается по формуле.
+    if (civ._active === false || enemy._active === false) abstractBattle(civ, enemy);
     const needA = Math.max(3, Math.ceil((civ.war.startPop ?? 4) * 0.5));
     const needB = Math.max(3, Math.ceil((enemy.war?.startPop ?? 4) * 0.5));
     if (civ.warLosses >= needA && popOf(civ) > 0) surrender(civ, enemy);

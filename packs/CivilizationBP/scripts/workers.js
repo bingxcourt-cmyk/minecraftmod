@@ -188,7 +188,7 @@ export function wander(civ, brain, r = 10) {
 // ---------- Ресурсы ----------
 export function foodCap(civ) {
   let cap = 60;
-  for (const b of civ.buildings) {
+  for (const b of [...civ.buildings, ...(civ.offQueue ?? [])]) {
     if (b.t === "barn") cap += 80;
     else if (b.t.startsWith("farm")) cap += 15;
     else if (b.t === "townhall" || b.t === "castle") cap += 40;
@@ -519,7 +519,7 @@ export function projectOps(civ) {
 export function remainingCost(civ) {
   const p = civ.project;
   const need = { wood: 0, stone: 0, iron: 0, food: 0 };
-  if (!p) return need;
+  if (!p || p.paid) return need;
   const ops = projectOps(civ);
   for (let i = p.step; i < ops.length; i++) {
     const c = ops[i].cost;
@@ -615,6 +615,13 @@ export function buildStep(civ) {
     }
     if (id === op.id && !op.pair) {
       p.step++;
+      continue;
+    }
+    if (p.paid) {
+      // Уже оплачено в фоновой симуляции — ставим быстро и бесплатно.
+      placeOp(dim, op);
+      p.step++;
+      if (++changes >= 12) break;
       continue;
     }
     const missing = canPay(civ, op.cost);

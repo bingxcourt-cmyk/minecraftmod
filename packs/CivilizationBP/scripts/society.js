@@ -17,13 +17,20 @@ export const ERAS = [
 const HOUSE_BY_ERA = ["hut", "house", "stonehouse", "stonehouse"];
 const FARM_BY_ERA = ["farm_small", "farm", "farm", "farm"];
 
-export const has = (civ, t) => civ.buildings.some((b) => b.t === t);
-export const count = (civ, pred) => civ.buildings.filter(pred).length;
-export const popOf = (civ) => (S.members.get(civ.id) ?? []).length;
+// Постройки, уже оплаченные в фоновой симуляции, считаются построенными.
+export const allBuilt = (civ) => [...civ.buildings, ...(civ.offQueue ?? []), ...(civ.project?.paid ? [civ.project] : [])];
+export const has = (civ, t) => allBuilt(civ).some((b) => b.t === t);
+export const count = (civ, pred) => allBuilt(civ).filter(pred).length;
+
+/** Население: вблизи игрока — настоящие жители, вдали — по переписи с учётом рождений и смертей. */
+export function popOf(civ) {
+  if (civ._active === false && civ.census) return Math.max(0, civ.census.pop + (civ.off?.pop ?? 0));
+  return (S.members.get(civ.id) ?? []).length;
+}
 
 export function housingOf(civ) {
   let n = 3;
-  for (const b of civ.buildings) n += getBP(b.t).beds;
+  for (const b of allBuilt(civ)) n += getBP(b.t).beds;
   return n;
 }
 
@@ -261,14 +268,17 @@ export function eraTick(civ) {
 }
 
 // ---------- Выбор и размещение построек ----------
-function chooseNext(civ) {
+export const noteBuilt = (civ, t) => (civ.lastHouse = HOUSE_BY_ERA.includes(t));
+
+export function chooseNext(civ) {
   if ((civ.blockedUntil ?? 0) > S.clock) return null;
   const pop = popOf(civ);
   const q = ERAS[civ.era].queue;
   if (civ.qi < q.length && q[civ.qi] === "center") return { t: "center", fromQueue: true };
   const farms = count(civ, (b) => b.t.startsWith("farm"));
   if (farms > 0 && farms * 6 < pop && (civ.starving || civ.res.food < pop * 2)) return { t: FARM_BY_ERA[civ.era], fromQueue: false };
-  if (pop >= housingOf(civ) && pop < 40) return { t: HOUSE_BY_ERA[civ.era], fromQueue: false };
+  // Дома и постройки эпохи чередуются, иначе рождения съедают всю стройку.
+  if (pop >= housingOf(civ) && pop < 40 && !(civ.lastHouse && civ.qi < q.length)) return { t: HOUSE_BY_ERA[civ.era], fromQueue: false };
   if (civ.qi < q.length) return { t: q[civ.qi], fromQueue: true };
   if (farms * 5 < pop) return { t: FARM_BY_ERA[civ.era], fromQueue: false };
   return null;
@@ -340,6 +350,19 @@ function validate(civ, c, gap = 2) {
 export function searchTick(civ) {
   if (civ.project) return;
   let s = S.search.get(civ.id);
+  // Сначала возводим то, что уже оплачено в фоновой симуляции.
+  const q = civ.offQueue?.[0];
+  if (q && !s) {
+    if (q.x !== undefined) {
+      civ.offQueue.shift();
+      civ.project = { t: q.t, x: q.x, y: q.y, z: q.z, r: q.r, step: 0, fromQueue: false, paid: true };
+      markDirty(civ);
+      return;
+    }
+    s = { t: q.t, fromQueue: false, paid: true, cands: genCands(civ, q.t, q.t === "center" ? 0 : 7), i: 0 };
+    S.search.set(civ.id, s);
+    civ._reassign = true;
+  }
   if (!s) {
     const next = chooseNext(civ);
     if (!next) return;
@@ -351,7 +374,9 @@ export function searchTick(civ) {
     const c = s.cands[s.i++];
     const v = validate(civ, c);
     if (!v) continue;
-    civ.project = { t: s.t, x: c.x, y: v.base, z: c.z, r: c.r, step: 0, fromQueue: s.fromQueue };
+    civ.project = { t: s.t, x: c.x, y: v.base, z: c.z, r: c.r, step: 0, fromQueue: s.fromQueue, paid: !!s.paid };
+    if (!s.paid) noteBuilt(civ, s.t);
+    if (s.paid) civ.offQueue.shift();
     S.search.delete(civ.id);
     markDirty(civ);
     for (const pl of playersNear(civ.center, 96)) pl.sendMessage(`§7[${civ.name}] Начали строить: ${TYPES[s.t].name}`);
@@ -359,6 +384,7 @@ export function searchTick(civ) {
   }
   if (s.i >= s.cands.length) {
     S.search.delete(civ.id);
+    if (s.paid) civ.offQueue.shift();
     if (s.fromQueue) civ.qi++;
     else civ.blockedUntil = S.clock + 90;
     markDirty(civ);
@@ -532,15 +558,17 @@ export function colonyCheck(civ) {
 // ---------- Гибель цивилизации ----------
 export function collapseCheck(civ) {
   const dim = DIM();
-  const active = loaded(dim, civ.center) && playersNear(civ.center, 48).length > 0;
-  if (!active || popOf(civ) > 0 || civ.colony) {
+  // Вдали от игрока цивилизация гибнет, когда по фоновой симуляции не осталось жителей.
+  const farDead = civ._active === false && civ.census && popOf(civ) <= 0 && !civ.colony;
+  const active = loaded(dim, civ.center) && playersNear(civ.center, S.activeChunks * 16).length > 0;
+  if (!farDead && (!active || popOf(civ) > 0 || civ.colony)) {
     S.emptyTicks.delete(civ.id);
     return false;
   }
   const n = (S.emptyTicks.get(civ.id) ?? 0) + 1;
   S.emptyTicks.set(civ.id, n);
   // Ждём 40 секунд: после загрузки мира жители появляются не сразу.
-  if (n < 40) return false;
+  if (!farDead && n < 40) return false;
   S.emptyTicks.delete(civ.id);
   const enemy = civ.war ? S.civs.get(civ.war.enemy) : undefined;
   if (enemy) {

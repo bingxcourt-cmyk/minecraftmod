@@ -184,7 +184,7 @@ export function onScriptEvent(ev) {
       if (!S.civs.size) return say("§7Цивилизаций пока нет.");
       for (const civ of S.civs.values()) {
         const c = civ.center;
-        say(`${civ.color}${civ.name}§r — ${ERAS[civ.era].name}, жителей ${popOf(civ)}, центр ${c.x} ${c.y} ${c.z}${civ.war ? " §c(война)" : ""}`);
+        say(`${civ.color}${civ.name}§r — ${ERAS[civ.era].name}, жителей ${popOf(civ)}${civ._active === false ? " §7(вдали, фоновая симуляция)§r" : ""}, центр ${c.x} ${c.y} ${c.z}${civ.war ? " §c(война)" : ""}`);
       }
       return;
     }
@@ -225,6 +225,12 @@ export function onScriptEvent(ev) {
       for (const civ of [...S.civs.values()]) deleteCiv(civ);
       saveAll(true);
       return say("§cВсе цивилизации удалены.");
+    }
+    case "civ:radius": {
+      const v = Math.max(2, Math.min(16, Math.round(Number(ev.message) || 7)));
+      S.activeChunks = v;
+      saveAll();
+      return say(`§eЖивая симуляция — ${v} чанков (${v * 16} блоков) вокруг игрока, дальше — фоновая. Ставьте на 1 меньше «Расстояния симуляции» в настройках мира.`);
     }
     case "civ:night": {
       const a = String(ev.message ?? "").trim().toLowerCase();
