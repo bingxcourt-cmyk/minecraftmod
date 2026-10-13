@@ -10,6 +10,7 @@ import { statusTick, onInteractBlock, onScriptEvent } from "./ui.js";
 import { rescueIfStuck } from "./nav.js";
 import { isActive, offscreenTick, materialize, takeCensus } from "./offscreen.js";
 import { whTick } from "./wh.js";
+import { heldTick, heldCleanup, dropHeld } from "./held.js";
 
 const hooks = { onComplete: completeProject, soldier: soldierThink, settler: settlerThink };
 const ALWAYS_AWAKE = new Set(["soldier", "golem", "settler"]);
@@ -57,6 +58,7 @@ function regroup() {
   for (const [id, b] of S.brains) {
     if (!seen.has(id)) {
       resetTask(b);
+      dropHeld(b);
       S.brains.delete(id);
     }
   }
@@ -185,6 +187,7 @@ function onDeath(ev) {
   if (!brain) return;
   S.brains.delete(id);
   resetTask(brain);
+  dropHeld(brain);
   const civ = S.civs.get(brain.civId);
   if (!civ) return;
   civ.deaths++;
@@ -217,6 +220,16 @@ function start() {
   system.runInterval(thinkAll, 10);
   system.runInterval(everySecond, 20);
   system.runInterval(rescueAll, 10);
+  system.runInterval(() => {
+    try {
+      heldTick();
+    } catch {}
+  }, 2);
+  system.runInterval(() => {
+    try {
+      heldCleanup();
+    } catch {}
+  }, 100);
   system.runInterval(() => {
     try {
       whTick();

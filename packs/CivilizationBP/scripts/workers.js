@@ -4,6 +4,7 @@ import { isLog, isLeaves, isProtected, isPassableId, isNaturalGround, walkY, sta
 import { makeOps, cropCells, dims } from "./blueprints.js";
 import { findPath, findSafeSpot, rescueIfStuck } from "./nav.js";
 import { minerThink } from "./mine.js";
+import { heldIndex } from "./held.js";
 import { ERAS } from "./society.js";
 import { TOOL_FOR, TIERS, toolLabel, craftNeed, craft, useTool } from "./tools.js";
 
@@ -45,6 +46,7 @@ export function setRole(ent, brain, role, civ) {
 }
 
 export function updateTag(ent, brain, civ) {
+  brain.heldIdx = heldIndex(ent, brain.role);
   const h = Number(getProp(ent, P.HUNGER) ?? 20);
   const hc = h <= 5 ? "§c" : h <= 12 ? "§e" : "§a";
   const role = brain.role === "soldier" ? "§c" + ROLE_NAME.soldier : "§7" + (ROLE_NAME[brain.role] ?? "Житель");

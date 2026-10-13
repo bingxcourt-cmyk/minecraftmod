@@ -1,4 +1,6 @@
+import { system } from "@minecraft/server";
 import { getProp, setProp, markDirty, sound, particle, DIM, playersNear } from "./core.js";
+import { swinging } from "./held.js";
 
 // Какой инструмент нужен профессии.
 export const TOOL_FOR = { lumberjack: "axe", miner: "pickaxe", farmer: "hoe", hunter: "sword", soldier: "sword" };
@@ -73,6 +75,7 @@ export function craft(civ, ent, kind, reserve) {
  * Работа инструментом: тратит прочность. Возвращает { mult, tier, broke }.
  */
 export function useTool(ent, kind) {
+  swinging.set(ent.id, system.currentTick + 6); // взмах инструментом в руке
   const tools = toolsOf(ent);
   const tool = tools[kind];
   if (!tool) return { mult: TIERS[0].mult, tier: 0, broke: false };

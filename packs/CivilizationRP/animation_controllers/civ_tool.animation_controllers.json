@@ -1,0 +1,27 @@
+{
+  "format_version": "1.10.0",
+  "animation_controllers": {
+    "controller.animation.civ_tool": {
+      "initial_state": "idle",
+      "states": {
+        "idle": {
+          "transitions": [
+            {
+              "swing": "q.property('civ:swing')"
+            }
+          ]
+        },
+        "swing": {
+          "animations": [
+            "swing"
+          ],
+          "transitions": [
+            {
+              "idle": "q.all_animations_finished && !q.property('civ:swing')"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

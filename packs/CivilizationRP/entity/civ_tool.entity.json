@@ -1,0 +1,44 @@
+{
+  "format_version": "1.10.0",
+  "minecraft:client_entity": {
+    "description": {
+      "identifier": "civ:tool",
+      "materials": {
+        "default": "entity_alphatest"
+      },
+      "textures": {
+        "t0": "textures/items/wood_axe",
+        "t1": "textures/items/stone_axe",
+        "t2": "textures/items/iron_axe",
+        "t3": "textures/items/diamond_axe",
+        "t4": "textures/items/wood_pickaxe",
+        "t5": "textures/items/stone_pickaxe",
+        "t6": "textures/items/iron_pickaxe",
+        "t7": "textures/items/diamond_pickaxe",
+        "t8": "textures/items/wood_hoe",
+        "t9": "textures/items/stone_hoe",
+        "t10": "textures/items/iron_hoe",
+        "t11": "textures/items/diamond_hoe",
+        "t12": "textures/items/wood_sword",
+        "t13": "textures/items/stone_sword",
+        "t14": "textures/items/iron_sword",
+        "t15": "textures/items/diamond_sword"
+      },
+      "geometry": {
+        "default": "geometry.civ_tool"
+      },
+      "render_controllers": [
+        "controller.render.civ_tool"
+      ],
+      "animations": {
+        "swing": "animation.civ_tool.swing",
+        "ctrl": "controller.animation.civ_tool"
+      },
+      "scripts": {
+        "animate": [
+          "ctrl"
+        ]
+      }
+    }
+  }
+}
