@@ -1,9 +1,10 @@
 import { world, system } from "@minecraft/server";
-import { S, DIM, getB, loaded, markDirty, playersNear, dXZ } from "./core.js";
+import { S, DIM, getB, loaded, markDirty, dXZ } from "./core.js";
 import { groundAt, isPassableId, findDrySpot } from "./blocks.js";
 import { remainingCost } from "./workers.js";
 import { findSafeSpot } from "./nav.js";
 import { deferLight } from "./lights.js";
+import { note } from "./journal.js";
 
 // ---------- Дороги между поселениями ----------
 // С эпохи «Деревня» поселение прокладывает дорогу к ближайшему соседу и к своей метрополии.
@@ -63,12 +64,7 @@ export function planRoads() {
       if (roadBetween(civ, o) || dXZ(o.center, civ.center) > ROAD_MAX) continue;
       const n = Math.ceil(Math.max(Math.abs(o.center.x - civ.center.x), Math.abs(o.center.z - civ.center.z)));
       S.roads.push({ a: civ.id, b: o.id, x1: civ.center.x, z1: civ.center.z, x2: o.center.x, z2: o.center.z, done: "0".repeat(n + 1), cur: 0, pa: 0, pb: 0, v: 2 });
-      const told = new Set();
-      for (const pl of [...playersNear(civ.center, 200), ...playersNear(o.center, 200)]) {
-        if (told.has(pl.id)) continue;
-        told.add(pl.id);
-        pl.sendMessage(`§6[Дороги] ${civ.color}${civ.name}§6 начали прокладывать дорогу к ${o.color}${o.name}§6.`);
-      }
+      note("build", `${civ.name} и ${o.name} начали дорогу друг к другу (${n} блоков, каждый строит свою половину)`);
     }
   }
   // Дороги к исчезнувшим поселениям доделывать не нужно — но уже положенное остаётся.

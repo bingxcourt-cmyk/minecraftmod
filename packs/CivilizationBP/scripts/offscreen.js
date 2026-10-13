@@ -1,4 +1,3 @@
-import { world } from "@minecraft/server";
 import { S, DIM, loaded, playersNear, markDirty, personName, P, setProp } from "./core.js";
 import { TIERS, TOOL_FOR, toolTier, bestCraftable } from "./tools.js";
 import { TYPES, getBP } from "./blueprints.js";
@@ -7,6 +6,7 @@ import { findDrySpot } from "./blocks.js";
 import { brainOf, foodCap, remainingCost } from "./workers.js";
 import { findSafeSpot } from "./nav.js";
 import { craftTorches } from "./lights.js";
+import { note, warLog } from "./journal.js";
 
 // Поселение «живое», если рядом есть игрок (в пределах симуляции) и чанк центра загружен.
 // Дальше — фоновая симуляция по формулам, а результат появляется, когда игрок вернётся.
@@ -256,7 +256,7 @@ function colonyOffscreen(civ, pop) {
   civ.tension[colony.id] = 35;
   colony.tension[civ.id] = 35;
   markDirty(colony);
-  world.sendMessage(`§b[Цивилизации] Переселенцы из ${civ.color}${civ.name}§b основали колонию ${colony.color}§l${colony.name}§r§b (координаты ${dest.x}, ${dest.z}).`);
+  note("events", `Переселенцы из ${civ.name} основали колонию ${colony.name} (координаты ${dest.x}, ${dest.z})`);
 }
 
 // Центр колонии, основанной вдали, ставим на настоящую сушу, когда чанк загрузился.
@@ -305,7 +305,8 @@ export function materialize(civ) {
   parts.push(`добыто: дерево ${g.wood}, камень ${g.stone}, железо ${g.iron}${g.diamond ? `, алмазы ${g.diamond}` : ""}`);
   if (off.built.length) parts.push(`построено: ${off.built.join(", ")} (появится по мере возведения)`);
   const msg = `§b[${civ.name}] Пока вас не было (${Math.round(off.mins)} мин): ${parts.join("; ")}.`;
-  for (const pl of playersNear(civ.center, activeR() + 16)) pl.sendMessage(msg);
+  void msg;
+  note("events", `${civ.name} — пока вас не было (${Math.round(off.mins)} мин): ${parts.join("; ")}`);
   civ._reassign = true;
   markDirty(civ);
 }
@@ -348,7 +349,5 @@ export function abstractBattle(a, b) {
   const lossA = Math.min(A.soldiers, Math.floor((B.power / 20) * (0.5 + Math.random())));
   lose(a, b, lossA);
   lose(b, a, lossB);
-  if (lossA || lossB) {
-    world.sendMessage(`§c[Война] Бой ${a.color}${a.name}§c против ${b.color}${b.name}§c: потери ${lossA} и ${lossB}.`);
-  }
+  if (lossA || lossB) warLog(a, b, `бой вдали: ${a.name} потеряли ${lossA}, ${b.name} потеряли ${lossB}`);
 }

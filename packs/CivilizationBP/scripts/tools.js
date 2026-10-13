@@ -1,6 +1,7 @@
 import { system } from "@minecraft/server";
-import { getProp, setProp, markDirty, sound, particle, DIM, playersNear } from "./core.js";
+import { getProp, setProp, markDirty, sound, particle, DIM } from "./core.js";
 import { swinging } from "./held.js";
+import { note } from "./journal.js";
 
 // Какой инструмент нужен профессии.
 export const TOOL_FOR = { lumberjack: "axe", miner: "pickaxe", farmer: "hoe", hunter: "sword", soldier: "sword", guard: "sword" };
@@ -67,7 +68,7 @@ export function craft(civ, ent, kind, reserve) {
   const dim = DIM();
   sound(dim, t >= 3 ? "random.anvil_use" : "dig.wood", ent.location);
   particle(dim, "minecraft:villager_happy", { x: ent.location.x, y: ent.location.y + 2, z: ent.location.z });
-  if (t === 4) for (const pl of playersNear(civ.center, 64)) pl.sendMessage(`§b[${civ.name}] Сделан алмазный ${TOOL_NAME[kind]}!`);
+  if (t === 4) note("events", `${civ.name}: сделан алмазный ${TOOL_NAME[kind]}`);
   return t;
 }
 

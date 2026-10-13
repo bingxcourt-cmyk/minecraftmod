@@ -16,6 +16,7 @@ import { whTick } from "./wh.js";
 import { heldTick, heldCleanup, dropHeld } from "./held.js";
 import { scanThreats } from "./defense.js";
 import { lightsTick } from "./lights.js";
+import { note, warLog, loadJournal, saveJournal } from "./journal.js";
 
 const hooks = { onComplete: completeProject, soldier: soldierThink, settler: settlerThink };
 const ALWAYS_AWAKE = new Set(["soldier", "golem", "settler", "guard"]);
@@ -136,6 +137,7 @@ function everySecond() {
   }
   if (S.clock % 5 === 0) {
     saveAll();
+    saveJournal();
     markRealTime();
     showReport();
   }
@@ -229,9 +231,11 @@ function onDeath(ev) {
       enemy.kills++;
       markDirty(enemy);
     }
-    world.sendMessage(`§c[Война] ${civ.color}${name}§c (${civ.name}) пал в бою.`);
+    if (enemy) warLog(civ, enemy, `гибель в бою: ${name} (${civ.name})`);
   } else if (ev.damageSource.cause === "starve") {
-    world.sendMessage(`§4[${civ.name}] ${name} умер от голода.`);
+    note("people", `${civ.name}: смерть от голода — ${name}`);
+  } else {
+    note("people", `${civ.name}: гибель — ${name}`);
   }
 }
 
@@ -242,6 +246,7 @@ function start() {
   loadAll();
   loadRoads();
   loadMarket();
+  loadJournal();
   catchUp();
   system.runInterval(moveAll, 2);
   system.runInterval(thinkAll, 10);

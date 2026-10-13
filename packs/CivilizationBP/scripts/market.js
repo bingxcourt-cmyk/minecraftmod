@@ -1,7 +1,8 @@
 import { world } from "@minecraft/server";
-import { S, markDirty, playersNear } from "./core.js";
+import { S, markDirty } from "./core.js";
 import { ERAS, popOf, missingQueue } from "./society.js";
 import { remainingCost, foodCap } from "./workers.js";
+import { note } from "./journal.js";
 
 // Общий рынок с «торговым домом»: поселения продают ему излишки и покупают то, чего не хватает.
 // Цена каждого товара зависит от запаса на рынке: товара мало — дорого, много — дёшево.
@@ -87,9 +88,6 @@ function log(civ, text) {
   markDirty(civ);
 }
 
-function tell(civ, text) {
-  for (const pl of playersNear(civ.center, 160)) pl.sendMessage(text);
-}
 
 function sell(civ, k, qty) {
   if (qty <= 0) return 0;
@@ -165,7 +163,7 @@ export function marketTick() {
     if (deals.length) {
       const text = deals.join("; ");
       log(civ, text);
-      tell(civ, `§a[Рынок] ${civ.color}${civ.name}§a: ${text}.`);
+      note("market", `${civ.name}: ${text}`);
     }
     markDirty(civ);
   }

@@ -1,10 +1,11 @@
-import { world, EntityDamageCause } from "@minecraft/server";
+import { EntityDamageCause } from "@minecraft/server";
 import { S, DIM, d2, dXZ, rnd, markDirty, sound, particle, loaded, playersNear, cdTicks } from "./core.js";
 import { standY } from "./blocks.js";
 import { setTarget, near, updateTag } from "./workers.js";
 import { TIERS, useTool } from "./tools.js";
 import { abstractBattle } from "./offscreen.js";
 import { has, popOf, count } from "./society.js";
+import { note, warStart, warEnd } from "./journal.js";
 
 const WAR_DIST = 170;
 
@@ -30,13 +31,14 @@ export function declareWar(a, b) {
   b._reassign = true;
   markDirty(a);
   markDirty(b);
-  world.sendMessage(`§c[Война] ${a.color}§l${a.name}§r§c объявили войну ${b.color}§l${b.name}§r§c!`);
+  warStart(a, b);
   title([a, b], "§cВОЙНА!", `${a.color}${a.name} §7против ${b.color}${b.name}`);
   sound(DIM(), "raid.horn", a.center, 1);
   sound(DIM(), "raid.horn", b.center, 1);
 }
 
 function makePeace(a, b, msg) {
+  warEnd(a, b, msg);
   a.war = null;
   b.war = null;
   a.tension[b.id] = 0;
@@ -47,7 +49,6 @@ function makePeace(a, b, msg) {
   b._reassign = true;
   markDirty(a);
   markDirty(b);
-  world.sendMessage(msg);
   title([a, b], "§aМир", `${a.color}${a.name} §7и ${b.color}${b.name}`);
 }
 
@@ -184,6 +185,6 @@ export function golemTick(civ) {
     g.setDynamicProperty("civ:role", "golem");
     g.nameTag = `${civ.color}Страж ${civ.name}`;
     markDirty(civ);
-    for (const pl of playersNear(civ.center, 80)) pl.sendMessage(`§f[${civ.name}] Выкован железный страж.`);
+    note("events", `${civ.name}: выкован железный страж`);
   } catch {}
 }

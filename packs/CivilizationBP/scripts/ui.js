@@ -9,6 +9,7 @@ import { whLine, whCommand, showWhForm } from "./wh.js";
 import { mineInfo } from "./mine.js";
 import { roadInfo, teleportTo } from "./links.js";
 import { marketText } from "./market.js";
+import { showJournal } from "./journal.js";
 import { TOOL_FOR, TIERS, toolTier } from "./tools.js";
 
 export function nearestCiv(p, maxDist) {
@@ -200,15 +201,17 @@ export function onItemUse(ev) {
   const pl = ev.source;
   new ActionFormData()
     .title("Цивилизации")
+    .button("Журнал: войны, рынок, стройка, жители")
     .button("Телепорт к поселению")
     .button("Рынок: цены и казна")
     .button("ВХ на профессии")
     .button("Закрыть")
     .show(pl)
     .then((res) => {
-      if (res.selection === 0) showTpForm(pl);
-      if (res.selection === 1) showMarketForm(pl);
-      if (res.selection === 2) showWhForm(pl);
+      if (res.selection === 0) showJournal(pl);
+      if (res.selection === 1) showTpForm(pl);
+      if (res.selection === 2) showMarketForm(pl);
+      if (res.selection === 3) showWhForm(pl);
     })
     .catch(() => {});
 }
@@ -304,6 +307,10 @@ export function onScriptEvent(ev) {
       else S.nightWork = !S.nightWork;
       saveAll();
       return say(S.nightWork ? "§eНочью жители работают." : "§eНочью мирные жители спят (работают только воины).");
+    }
+    case "civ:log": {
+      if (!pl || pl.typeId !== "minecraft:player") return say("§cКоманду должен выполнить игрок.");
+      return showJournal(pl);
     }
     case "civ:market": {
       if (!pl || pl.typeId !== "minecraft:player") return say(marketText());

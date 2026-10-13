@@ -1,5 +1,5 @@
 import { BlockPermutation, EntityDamageCause, system } from "@minecraft/server";
-import { S, P, DIM, getB, getProp, setProp, dXZ, rnd, pick, markDirty, sound, particle, cdTicks, loaded, playersNear } from "./core.js";
+import { S, P, DIM, getB, getProp, setProp, dXZ, rnd, pick, markDirty, sound, particle, cdTicks, loaded } from "./core.js";
 import { isLog, isLeaves, isProtected, isPassableId, isNaturalGround, walkY, standY, strip, groundAt } from "./blocks.js";
 import { makeOps, cropCells, dims } from "./blueprints.js";
 import { findPath, findSafeSpot, rescueIfStuck } from "./nav.js";
@@ -9,6 +9,7 @@ import { isLight, deferLight } from "./lights.js";
 import { guardThink } from "./defense.js";
 import { ERAS } from "./society.js";
 import { TOOL_FOR, TIERS, toolLabel, craftNeed, craft, useTool } from "./tools.js";
+import { note } from "./journal.js";
 
 export const ROLE_NAME = {
   lumberjack: "Лесоруб", miner: "Шахтёр", farmer: "Фермер", hunter: "Охотник", builder: "Строитель",
@@ -388,7 +389,7 @@ function lumberjack(civ, ent, brain, tick) {
       if (civ._noTree > 40 && (civ.saplings?.length ?? 0) < 4 && !civ.needSaplings) {
         civ.needSaplings = true;
         markDirty(civ);
-        for (const pl of playersNear(civ.center, 160)) pl.sendMessage(`§2[${civ.name}] Вокруг нет леса — поселение закупит саженцы на рынке.`);
+        note("events", `${civ.name}: вокруг нет леса — закупят саженцы на рынке`);
       }
       if (forester(civ, ent, brain, tick)) return;
       if (planter(civ, ent, brain, tick)) return;

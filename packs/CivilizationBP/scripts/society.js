@@ -7,6 +7,7 @@ import { groundAt, standY, waterNear, findDrySpot } from "./blocks.js";
 import { TYPES, getBP, dims, doorFront, toWorld } from "./blueprints.js";
 import { brainOf, setRole, updateTag, resetTask, remainingCost, fastBuild } from "./workers.js";
 import { findSafeSpot, safeTeleport } from "./nav.js";
+import { note, warEndAll } from "./journal.js";
 
 export const ERAS = [
   { name: "Племя", queue: ["center", "farm_small", "hut", "hut", "well"], next: { pop: 4, stone: 10 } },
@@ -222,7 +223,7 @@ export function hungerTick(civ) {
     setProp(e, P.HUNGER, h);
     updateTag(e, brain, civ);
   }
-  if (starving && !civ.starving) announce(civ, `§c[${civ.name}] Голод! Жителям не хватает еды.`, 120);
+  if (starving && !civ.starving) note("events", `${civ.name}: голод, жителям не хватает еды`);
   civ.starving = starving;
 }
 
@@ -249,7 +250,7 @@ export function growthTick(civ) {
   civ.born++;
   join(civ, v);
   particle(dim, "minecraft:heart_particle", { x: spot.x, y: y + 1.5, z: spot.z });
-  for (const pl of playersNear(civ.center, 64)) pl.sendMessage(`§d[${civ.name}] Родился новый житель: ${getProp(v, P.NAME)}`);
+  note("people", `${civ.name}: новый житель — ${getProp(v, P.NAME)}`);
 }
 
 // ---------- Эпохи ----------
@@ -295,6 +296,7 @@ export function eraTick(civ) {
   markDirty(civ);
   const name = ERAS[civ.era].name;
   announce(civ, `§6[${civ.name}] Наступила новая эпоха: §l${name}§r§6!`, 250);
+  note("events", `${civ.name}: наступила эпоха «${name}»`);
   for (const pl of playersNear(civ.center, 96)) {
     try {
       pl.onScreenDisplay.setTitle(`§6${name}`, { subtitle: `${civ.color}${civ.name}`, fadeInDuration: 10, stayDuration: 60, fadeOutDuration: 10 });
@@ -423,7 +425,7 @@ export function searchTick(civ, paidOnly = false) {
     if (s.paid) civ.offQueue.shift();
     S.search.delete(civ.id);
     markDirty(civ);
-    for (const pl of playersNear(civ.center, 96)) pl.sendMessage(`§7[${civ.name}] Начали строить: ${TYPES[s.t].name}`);
+    note("build", `${civ.name}: начали строить «${TYPES[s.t].name}»`);
     return;
   }
   if (s.i >= s.cands.length) {
@@ -497,7 +499,7 @@ export function completeProject(civ) {
   const mid = { x: p.x + W / 2, y: p.y + 2, z: p.z + D / 2 };
   sound(dim, "random.levelup", mid, 0.8);
   for (let i = 0; i < 6; i++) particle(dim, "minecraft:villager_happy", { x: mid.x + rnd(-2, 2), y: mid.y + rnd(0, 2), z: mid.z + rnd(-2, 2) });
-  announce(civ, `§e[${civ.name}] Построено: §l${TYPES[p.t].name}`, 160);
+  note("build", `${civ.name}: построено «${TYPES[p.t].name}»`);
   if (p.t !== "center") layRoad(civ.center, doorFront(b));
 }
 
@@ -561,7 +563,7 @@ export function colonyTick(civ) {
   civ.colony = { ...dest, ids: settlers.map((e) => e.id), since: S.clock };
   civ.coloniesFounded = (civ.coloniesFounded ?? 0) + 1;
   for (const e of settlers) setRole(e, brainOf(e, civ.id), "settler", civ);
-  announce(civ, `§b[${civ.name}] Переселенцы отправились основать новую колонию!`, 160);
+  note("events", `${civ.name}: переселенцы отправились основать колонию`);
 }
 
 export function settlerThink(civ, ent, brain) {
@@ -608,7 +610,7 @@ export function colonyCheck(civ) {
   civ.tension[colony.id] = 35;
   colony.tension[civ.id] = 35;
   markDirty(civ);
-  announce(colony, `§b[Цивилизации] Жители ${civ.name} основали колонию ${colony.color}§l${colony.name}§r§b!`, 250);
+  note("events", `Жители ${civ.name} основали колонию ${colony.name} (${Math.floor(colony.center.x)}, ${Math.floor(colony.center.z)})`);
 }
 
 // ---------- Мгновенная стройка ----------
@@ -662,7 +664,7 @@ export function floodCheck(civ) {
   S.cellsCache.delete(civ.id);
   civ._reassign = true;
   markDirty(civ);
-  announce(civ, `§9[${civ.name}] Поселение затопило! Жители переносят центр на сушу (${dry.x}, ${dry.z}), потеряно построек: ${before - civ.buildings.length}.`, 200);
+  note("events", `${civ.name}: поселение затопило, центр перенесён на сушу (${dry.x}, ${dry.z}), потеряно построек: ${before - civ.buildings.length}`);
 }
 
 // ---------- Гибель цивилизации ----------
@@ -686,10 +688,13 @@ export function collapseCheck(civ) {
     enemy.war = null;
     enemy._reassign = true;
     markDirty(enemy);
-    world.sendMessage(`§4[Цивилизации] ${enemy.color}${enemy.name}§4 уничтожили ${civ.color}${civ.name}§4 и забрали их богатства!`);
+    warEndAll(civ, `${enemy.name} уничтожили ${civ.name} и забрали их богатства`);
+    world.sendMessage(`§4[Цивилизации] ${enemy.color}${enemy.name}§4 уничтожили ${civ.color}${civ.name}§4.`);
   } else {
+    warEndAll(civ, `${civ.name} пали`);
     world.sendMessage(`§4[Цивилизации] Цивилизация ${civ.color}${civ.name}§4 пала.`);
   }
+  note("events", enemy ? `${enemy.name} уничтожили ${civ.name}` : `Цивилизация ${civ.name} пала`);
   deleteCiv(civ);
   return true;
 }
