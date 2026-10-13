@@ -1,4 +1,4 @@
-import { world } from "@minecraft/server";
+import { world, system } from "@minecraft/server";
 import { ActionFormData } from "@minecraft/server-ui";
 import { S, dXZ, markDirty, saveAll, deleteCiv, DIM } from "./core.js";
 import { TYPES } from "./blueprints.js";
@@ -7,6 +7,7 @@ import { ERAS, popOf, housingOf, newCiv, join, eraNeed } from "./society.js";
 import { declareWar } from "./war.js";
 import { whLine, whCommand, showWhForm } from "./wh.js";
 import { mineInfo } from "./mine.js";
+import { roadInfo, teleportTo } from "./links.js";
 import { TOOL_FOR, TIERS, toolTier } from "./tools.js";
 
 export function nearestCiv(p, maxDist) {
@@ -139,6 +140,8 @@ export function showCivForm(pl, civ) {
     `§lИнструменты:§r ${toolSummary(civ)}`,
     `§lШахта:§r ${mineInfo(civ)}`,
     eraNeed(civ),
+    `§lДороги:§r ${roadInfo(civ)}`,
+    (civ.trades ?? []).length ? `§lТорговля:§r ${civ.trades.slice(0, 3).join("; ")}` : "",
     `§lРодилось:§r ${civ.born}  §lПогибло:§r ${civ.deaths}  §lПобед в боях:§r ${civ.kills}`,
     parent ? `§lМетрополия:§r ${parent.name}` : "",
     "",
@@ -152,10 +155,54 @@ export function showCivForm(pl, civ) {
     .body(body.join("\n"))
     .button("Подарить ресурсы из инвентаря")
     .button("ВХ на профессии")
+    .button("Телепорт к поселению")
     .button("Закрыть")
     .show(pl)
     .then((res) => {
       if (res.selection === 0) donate(pl, civ);
+      if (res.selection === 1) showWhForm(pl);
+      if (res.selection === 2) showTpForm(pl);
+    })
+    .catch(() => {});
+}
+
+/** Список всех поселений с телепортом. Открывается компасом, колоколом или /scriptevent civ:tp. */
+export function showTpForm(pl, tries = 0) {
+  const list = [...S.civs.values()].sort((a, b) => dXZ(a.center, pl.location) - dXZ(b.center, pl.location));
+  if (!list.length) return pl.sendMessage("§7Цивилизаций пока нет.");
+  const form = new ActionFormData().title("Телепорт к поселению").body("Куда отправиться?");
+  for (const c of list) {
+    const d = Math.round(dXZ(c.center, pl.location));
+    const tag = c.war ? " §c(война)" : c._active === false ? " §8(вдали)" : "";
+    form.button(`${c.color}${c.name}§r — ${ERAS[c.era].name}, ${popOf(c)} жит., ${d} бл.${tag}`);
+  }
+  form
+    .show(pl)
+    .then((res) => {
+      // Если открыт чат, форма не показывается — пробуем ещё раз чуть позже.
+      if (res.canceled && res.cancelationReason === "UserBusy" && tries < 20) {
+        system.runTimeout(() => showTpForm(pl, tries + 1), 10);
+        return;
+      }
+      if (res.selection === undefined) return;
+      const civ = list[res.selection];
+      if (civ && S.civs.has(civ.id)) teleportTo(pl, civ);
+    })
+    .catch(() => {});
+}
+
+/** Компас в руке: меню мода (без читов). */
+export function onItemUse(ev) {
+  if (ev.itemStack?.typeId !== "minecraft:compass") return;
+  const pl = ev.source;
+  new ActionFormData()
+    .title("Цивилизации")
+    .button("Телепорт к поселению")
+    .button("ВХ на профессии")
+    .button("Закрыть")
+    .show(pl)
+    .then((res) => {
+      if (res.selection === 0) showTpForm(pl);
       if (res.selection === 1) showWhForm(pl);
     })
     .catch(() => {});
@@ -244,11 +291,15 @@ export function onScriptEvent(ev) {
       saveAll();
       return say(S.nightWork ? "§eНочью жители работают." : "§eНочью мирные жители спят (работают только воины).");
     }
+    case "civ:tp": {
+      if (!pl || pl.typeId !== "minecraft:player") return say("§cКоманду должен выполнить игрок.");
+      return showTpForm(pl);
+    }
     case "civ:wh": {
       if (!pl || pl.typeId !== "minecraft:player") return say("§cКоманду должен выполнить игрок.");
       return whCommand(pl, ev.message);
     }
     default:
-      if (ev.id.startsWith("civ:")) say("§7Команды: civ:info, civ:speed <x>, civ:found, civ:war, civ:peace, civ:res, civ:reset, civ:wh <профессия|all|off>, civ:night <work|rest>");
+      if (ev.id.startsWith("civ:")) say("§7Команды: civ:info, civ:speed <x>, civ:found, civ:war, civ:peace, civ:res, civ:reset, civ:wh <профессия|all|off>, civ:night <work|rest>, civ:tp");
   }
 }

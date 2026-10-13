@@ -6,7 +6,8 @@ import {
   settlerThink, completeProject, collapseCheck, foundingScan, floodCheck,
 } from "./society.js";
 import { diplomacyTick, soldierThink, warBuffs, golemTick } from "./war.js";
-import { statusTick, onInteractBlock, onScriptEvent } from "./ui.js";
+import { statusTick, onInteractBlock, onScriptEvent, onItemUse } from "./ui.js";
+import { loadRoads, planRoads, layRoads, tradeTick } from "./links.js";
 import { rescueIfStuck } from "./nav.js";
 import { isActive, offscreenTick, materialize, takeCensus } from "./offscreen.js";
 import { whTick } from "./wh.js";
@@ -115,6 +116,9 @@ function everySecond() {
   }
   try {
     if (S.clock % 30 === 0) diplomacyTick();
+    if (S.clock % 60 === 15) planRoads();
+    if (S.clock % 60 === 45) tradeTick();
+    layRoads();
     if (S.clock % 5 === 0) foundingScan();
     statusTick();
   } catch (e) {
@@ -222,6 +226,7 @@ function start() {
   if (started) return;
   started = true;
   loadAll();
+  loadRoads();
   system.runInterval(moveAll, 2);
   system.runInterval(thinkAll, 10);
   system.runInterval(everySecond, 20);
@@ -243,6 +248,7 @@ function start() {
   }, 10);
   world.afterEvents.entityDie.subscribe(onDeath, { entityTypes: ["minecraft:villager_v2", "minecraft:iron_golem"] });
   world.afterEvents.playerInteractWithBlock.subscribe(onInteractBlock);
+  world.afterEvents.itemUse.subscribe(onItemUse);
   system.afterEvents.scriptEventReceive.subscribe(onScriptEvent, { namespaces: ["civ"] });
   console.warn("[Цивилизации] Мод загружен");
 }

@@ -253,10 +253,28 @@ export function growthTick(civ) {
 
 // ---------- Эпохи ----------
 /** Что осталось сделать до следующей эпохи (для подсказки игроку). */
+/**
+ * Каких построек эпохи (текущей и прошлых) не хватает — по тому, что реально стоит.
+ * Разрушенное или пропущенное снова попадает в список и будет достроено.
+ */
+export function missingQueue(civ) {
+  const have = {};
+  for (const b of allBuilt(civ)) have[b.t] = (have[b.t] ?? 0) + 1;
+  const seen = {};
+  const out = [];
+  for (let e = 0; e <= civ.era; e++) {
+    for (const t of ERAS[e].queue) {
+      seen[t] = (seen[t] ?? 0) + 1;
+      if ((have[t] ?? 0) < seen[t]) out.push(t);
+    }
+  }
+  return out;
+}
+
 export function eraNeed(civ) {
   const era = ERAS[civ.era];
   if (!era.next) return "";
-  const left = era.queue.slice(civ.qi).map((t) => TYPES[t].name);
+  const left = missingQueue(civ).map((t) => TYPES[t].name);
   const need = [];
   if (left.length) need.push(`построить: ${left.join(", ")}`);
   const n = era.next;
@@ -268,7 +286,7 @@ export function eraNeed(civ) {
 
 export function eraTick(civ) {
   const era = ERAS[civ.era];
-  if (!era.next || civ.qi < era.queue.length) return;
+  if (!era.next || missingQueue(civ).length) return;
   const n = era.next;
   if (popOf(civ) < (n.pop ?? 0) || civ.res.stone < (n.stone ?? 0) || civ.res.iron < (n.iron ?? 0)) return;
   civ.era++;
@@ -290,14 +308,14 @@ export const noteBuilt = (civ, t) => (civ.lastHouse = HOUSE_BY_ERA.includes(t));
 export function chooseNext(civ) {
   if ((civ.blockedUntil ?? 0) > S.clock) return null;
   const pop = popOf(civ);
-  const q = ERAS[civ.era].queue;
-  if (civ.qi < q.length && q[civ.qi] === "center") return { t: "center", fromQueue: true };
-  if (civ.era > 0 && !has(civ, "center")) return { t: "center", fromQueue: false };
+  // Постройки эпохи, для которых сейчас не нашлось места, пробуем снова через 2 минуты.
+  const miss = missingQueue(civ).filter((t) => (civ.failed?.[t] ?? 0) <= S.clock);
+  if (miss[0] === "center" || !has(civ, "center")) return { t: "center", fromQueue: true };
   const farms = count(civ, (b) => b.t.startsWith("farm"));
   if (farms > 0 && farms * 6 < pop && (civ.starving || civ.res.food < pop * 2)) return { t: FARM_BY_ERA[civ.era], fromQueue: false };
   // Дома и постройки эпохи чередуются, иначе рождения съедают всю стройку.
-  if (pop >= housingOf(civ) && pop < 40 && !(civ.lastHouse && civ.qi < q.length)) return { t: HOUSE_BY_ERA[civ.era], fromQueue: false };
-  if (civ.qi < q.length) return { t: q[civ.qi], fromQueue: true };
+  if (pop >= housingOf(civ) && pop < 40 && !(civ.lastHouse && miss.length)) return { t: HOUSE_BY_ERA[civ.era], fromQueue: false };
+  if (miss.length) return { t: miss[0], fromQueue: true };
   if (farms * 5 < pop) return { t: FARM_BY_ERA[civ.era], fromQueue: false };
   return null;
 }
@@ -409,8 +427,10 @@ export function searchTick(civ) {
   if (s.i >= s.cands.length) {
     S.search.delete(civ.id);
     if (s.paid) civ.offQueue.shift();
-    if (s.fromQueue) civ.qi++;
-    else civ.blockedUntil = S.clock + 90;
+    // Места не нашлось — не забываем постройку, а пробуем позже (за это время могут вырубить лес и т.п.).
+    civ.failed = civ.failed ?? {};
+    civ.failed[s.t] = S.clock + 120;
+    if (!s.fromQueue) civ.blockedUntil = S.clock + 90;
     markDirty(civ);
   }
 }
