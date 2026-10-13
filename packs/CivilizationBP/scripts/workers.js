@@ -1,19 +1,20 @@
 import { BlockPermutation, EntityDamageCause, system } from "@minecraft/server";
 import { S, P, DIM, getB, getProp, setProp, dXZ, rnd, pick, markDirty, sound, particle, cdTicks, loaded } from "./core.js";
-import { isLog, isLeaves, isProtected, isPassableId, isNaturalGround, walkY, standY, strip, groundAt } from "./blocks.js";
+import { isLog, isLeaves, isProtected, isPassableId, isNaturalGround, walkY, standY, strip, groundAt, GATE } from "./blocks.js";
+import { tryBreakWall, insideWall, wallShare, hostileWallCiv, outsidePoint } from "./walls.js";
 import { makeOps, cropCells, dims } from "./blueprints.js";
 import { findPath, findSafeSpot, rescueIfStuck } from "./nav.js";
 import { minerThink } from "./mine.js";
 import { heldIndex } from "./held.js";
 import { isLight, deferLight } from "./lights.js";
-import { guardThink } from "./defense.js";
+import { guardThink, armorOf, ARMOR_NAME } from "./defense.js";
 import { ERAS } from "./society.js";
 import { TOOL_FOR, TIERS, toolLabel, craftNeed, craft, useTool } from "./tools.js";
 import { note } from "./journal.js";
 
 export const ROLE_NAME = {
   lumberjack: "Лесоруб", miner: "Шахтёр", farmer: "Фермер", hunter: "Охотник", builder: "Строитель",
-  soldier: "Воин", guard: "Стражник", settler: "Переселенец", child: "Ребёнок", golem: "Страж", "": "Житель",
+  soldier: "Воин", guard: "Стражник", raider: "Бандит", settler: "Переселенец", child: "Ребёнок", golem: "Страж", "": "Житель",
 };
 
 // ---------- Мозг жителя ----------
@@ -56,7 +57,7 @@ export function updateTag(ent, brain, civ) {
   const role = brain.role === "soldier" || brain.role === "guard" ? "§c" + ROLE_NAME[brain.role] : "§7" + (ROLE_NAME[brain.role] ?? "Житель");
   const tag = brain.role === "golem"
     ? `${civ.color}Страж ${civ.name}`
-    : `${civ.color}${brain.name}§r\n${role} ${hc}Еда:${Math.round(h)}\n${toolLabel(ent, brain.role)}`;
+    : `${civ.color}${brain.name}§r\n${role} ${hc}Еда:${Math.round(h)}\n${toolLabel(ent, brain.role)}${armorOf(ent) ? " §7" + ARMOR_NAME[armorOf(ent)] : ""}`;
   if (brain.tag === tag) return;
   brain.tag = tag;
   try {
@@ -103,6 +104,7 @@ export function moveStep(brain) {
     return;
   }
   const dim = DIM();
+  GATE.hostile = brain.role === "raider" || (brain.role === "soldier" && !!S.civs.get(brain.civId)?.war);
   // Идём по найденному пути (в обход стен, через двери), если он есть.
   let goal = t;
   const path = brain.path;
@@ -135,10 +137,22 @@ export function moveStep(brain) {
   } else {
     pr.n++;
     if (pr.n === 12 && !brain.path) requestPath(brain, p, t);
+    // Враг упёрся в стену — ломает её, а не перелезает.
+    if (pr.n > 30 && (brain.role === "raider" || brain.role === "soldier") && tryBreakWall(brain)) {
+      pr.n = 31;
+      return;
+    }
     if (pr.n > 50) {
       pr.n = 0;
       pr.best = td;
       brain.path = null;
+      // Враг не перелезает через стену: подходит к ней снаружи и ломает.
+      const wc = (brain.role === "raider" || brain.role === "soldier") && hostileWallCiv(brain);
+      if (wc && !insideWall(wc, p.x, p.z) && insideWall(wc, t.x, t.z)) {
+        const o = outsidePoint(wc, p);
+        if (o) unstick(ent, brain, dim, { x: o.x, y: p.y, z: o.z });
+        return;
+      }
       unstick(ent, brain, dim, t);
       return;
     }
@@ -185,9 +199,10 @@ export function wander(civ, brain, r = 10) {
     const d = rnd(2, r);
     const x = civ.center.x + Math.cos(a) * d;
     const z = civ.center.z + Math.sin(a) * d;
-    // Гуляют только по суше, в воду не заходят.
+    // Гуляют только по суше, в воду не заходят; за стену без дела не выходят.
     const g = groundAt(DIM(), Math.floor(x), Math.floor(z));
-    brain.wander = !g || g.liquid ? null : { x, y: g.y + 1, z };
+    const outside = civ.wall && wallShare(civ) > 0.5 && !insideWall(civ, x, z);
+    brain.wander = !g || g.liquid || outside ? null : { x, y: g.y + 1, z };
   }
   if (brain.wander) setTarget(brain, brain.wander, 1.2);
 }
@@ -804,6 +819,7 @@ export function think(civ, ent, brain, tick, hooks) {
     case "soldier":
     case "golem": return hooks.soldier(civ, ent, brain, tick);
     case "guard": return guardThink(civ, ent, brain, tick);
+    case "raider": return hooks.raider(civ, ent, brain, tick);
     case "settler": return hooks.settler(civ, ent, brain, tick);
     case "child": return wander(civ, brain, 6);
     default: return wander(civ, brain, 8);

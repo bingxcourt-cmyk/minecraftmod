@@ -10,6 +10,8 @@ import { mineInfo } from "./mine.js";
 import { roadInfo, teleportTo } from "./links.js";
 import { marketText } from "./market.js";
 import { showJournal } from "./journal.js";
+import { creditText, repOf, debtOf } from "./credit.js";
+import { wallInfo } from "./walls.js";
 import { TOOL_FOR, TIERS, toolTier } from "./tools.js";
 
 export function nearestCiv(p, maxDist) {
@@ -140,6 +142,8 @@ export function showCivForm(pl, civ) {
     `§lПостроек:§r ${civ.buildings.filter((b) => b.t !== "quarry").length}`,
     `§lРесурсы:§r дерево ${r.wood}, камень ${r.stone}, еда ${r.food}/${foodCap(civ)}, железо ${r.iron}, алмазы ${r.diamond ?? 0}, саженцы ${r.saplings ?? 0}`,
     `§lСклад:§r андезит ${r.andesite ?? 0}, уголь ${r.coal ?? 0}, факелы ${r.torches ?? 0}${civ.lights?.length ? ` §e(ждут света: ${civ.lights.length} мест)` : ""}`,
+    `§lРепутация:§r ${repOf(civ)}${debtOf(civ) ? `, §cдолг ${debtOf(civ).ln}: ${debtOf(civ).paid}/${debtOf(civ).due}§r` : ""}${civ.marketBan ? " §c(рынок закрыт)" : ""}`,
+    `§lСтена:§r ${wallInfo(civ)}`,
     `§lКазна:§r ${Math.floor(civ.coins ?? 0)} монет${civ.needSaplings ? "  §2(ищут саженцы — вокруг нет леса)" : ""}`,
     `§lИнструменты:§r ${toolSummary(civ)}`,
     `§lШахта:§r ${mineInfo(civ)}`,
@@ -201,9 +205,10 @@ export function onItemUse(ev) {
   const pl = ev.source;
   new ActionFormData()
     .title("Цивилизации")
-    .button("Журнал: войны, рынок, стройка, жители")
+    .button("Журнал: войны, павшие, кредиты, рынок…")
     .button("Телепорт к поселению")
     .button("Рынок: цены и казна")
+    .button("Кредиты: долги и репутация")
     .button("ВХ на профессии")
     .button("Закрыть")
     .show(pl)
@@ -211,9 +216,14 @@ export function onItemUse(ev) {
       if (res.selection === 0) showJournal(pl);
       if (res.selection === 1) showTpForm(pl);
       if (res.selection === 2) showMarketForm(pl);
-      if (res.selection === 3) showWhForm(pl);
+      if (res.selection === 3) showCreditForm(pl);
+      if (res.selection === 4) showWhForm(pl);
     })
     .catch(() => {});
+}
+
+export function showCreditForm(pl) {
+  new ActionFormData().title("Кредиты").body(creditText()).button("Закрыть").show(pl).catch(() => {});
 }
 
 export function showMarketForm(pl) {

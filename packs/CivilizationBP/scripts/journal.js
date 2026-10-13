@@ -5,6 +5,8 @@ import { S } from "./core.js";
 // Журнал вместо спама в чате. Открывается компасом → «Журнал».
 // Разделы хранятся отдельно (у мира ограничение на размер одной записи).
 const CATS = {
+  fallen: { name: "Павшие цивилизации", max: 40 },
+  credit: { name: "Кредиты", max: 60 },
   market: { name: "Рынок", max: 60 },
   build: { name: "Стройка и дороги", max: 60 },
   people: { name: "Жители: рождения и смерти", max: 60 },
@@ -47,11 +49,11 @@ export function note(cat, text) {
 
 const findWar = (a, b) => (S.journal?.wars ?? []).find((w) => !w.end && ((w.a === a.id && w.b === b.id) || (w.a === b.id && w.b === a.id)));
 
-export function warStart(a, b) {
+export function warStart(a, b, why = "") {
   const wars = S.journal.wars;
-  wars.unshift({ a: a.id, b: b.id, an: a.name, bn: b.name, t: Date.now(), log: [] });
+  wars.unshift({ a: a.id, b: b.id, an: a.name, bn: b.name, t: Date.now(), log: [], why });
   if (wars.length > MAX_WARS) wars.length = MAX_WARS;
-  warLog(a, b, `${a.name} объявили войну ${b.name}`);
+  warLog(a, b, `${a.name} объявили войну ${b.name}${why ? ` (причина: ${why})` : ""}`);
 }
 
 export function warLog(a, b, text) {
@@ -133,7 +135,8 @@ function showWars(pl) {
   form.body(wars.length ? "Нажмите на войну, чтобы открыть её летопись." : "§7Войн ещё не было.");
   for (const w of wars) {
     const dur = Math.round(((w.end ?? Date.now()) - w.t) / 60000);
-    form.button(w.end ? `${w.an} — ${w.bn}\n§8окончена: ${w.result.slice(0, 40)}` : `§c${w.an} — ${w.bn}\n§4идёт ${dur} мин`);
+    const why = w.why ? `, ${w.why}` : "";
+    form.button(w.end ? `${w.an} — ${w.bn}\n§8окончена${why}` : `§c${w.an} — ${w.bn}\n§4идёт ${dur} мин${why}`);
   }
   form.button("Назад");
   show(pl, form, (res) => {
@@ -144,7 +147,7 @@ function showWars(pl) {
 }
 
 function showWar(pl, w) {
-  const body = [`§l${w.an} против ${w.bn}§r`, w.end ? `Итог: ${w.result}` : "§cВойна идёт", "", ...w.log.slice().reverse().map(line)].join("\n");
+  const body = [`§l${w.an} против ${w.bn}§r`, `Причина: ${w.why || "не записана"}`, w.end ? `Итог: ${w.result}` : "§cВойна идёт", "", ...w.log.slice().reverse().map(line)].join("\n");
   show(pl, new ActionFormData().title("Летопись войны").body(body).button("Назад"), (res) => {
     if (res.selection === 0) showWars(pl);
   });

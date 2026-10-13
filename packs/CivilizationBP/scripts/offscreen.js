@@ -6,6 +6,8 @@ import { findDrySpot } from "./blocks.js";
 import { brainOf, foodCap, remainingCost } from "./workers.js";
 import { findSafeSpot } from "./nav.js";
 import { craftTorches } from "./lights.js";
+import { raidOffscreen } from "./bandits.js";
+import { planWall } from "./walls.js";
 import { note, warLog } from "./journal.js";
 
 // Поселение «живое», если рядом есть игрок (в пределах симуляции) и чанк центра загружен.
@@ -214,6 +216,8 @@ export function offscreenTick(civ, dt) {
     }
   }
   craftTorches(civ);
+  raidOffscreen(civ, off, k);
+  planWall(civ);
   eraTick(civ);
   colonyOffscreen(civ, pop);
   markDirty(civ);

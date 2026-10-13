@@ -3,6 +3,7 @@ import { S, markDirty } from "./core.js";
 import { ERAS, popOf, missingQueue } from "./society.js";
 import { remainingCost, foodCap } from "./workers.js";
 import { note } from "./journal.js";
+import { wallLeft, WALL_STONE } from "./walls.js";
 
 // Общий рынок с «торговым домом»: поселения продают ему излишки и покупают то, чего не хватает.
 // Цена каждого товара зависит от запаса на рынке: товара мало — дорого, много — дёшево.
@@ -70,7 +71,8 @@ function spareOf(civ) {
   const pop = popOf(civ);
   const keep = {
     wood: rc.wood + 80,
-    stone: Math.max(rc.stone, next.stone ?? 0) + 60,
+    // Стена важнее продажи излишков: камень на неё не продают.
+    stone: Math.max(rc.stone, next.stone ?? 0) + 60 + Math.min(2000, wallLeft(civ) * WALL_STONE),
     food: pop * 4 + 10,
     saplings: 4,
     andesite: civ.era >= 1 ? 60 : 0,
@@ -122,6 +124,13 @@ export function marketTick() {
     const need = needsOf(civ);
     const spare = spareOf(civ);
     const deals = [];
+    civ._short = 0;
+    civ.unmet = {};
+    // Попросили скидку по кредиту — рынок для них закрыт до полной выплаты.
+    if (civ.marketBan) {
+      for (const k in need) if (need[k] > 0) civ.unmet[k] = need[k];
+      continue;
+    }
     for (const k of Object.keys(need)) {
       if (need[k] <= 0) continue;
       const cost = Math.ceil(price(k) * need[k]);
@@ -151,9 +160,16 @@ export function marketTick() {
       }
       const b = buy(civ, k, need[k]);
       if (b.qty > 0) deals.push(`купили ${b.qty} ${GOOD_NAME[k]} за ${b.cost} мон.`);
+      // Не смогли купить всё нужное: нет денег — повод взять кредит; нет товара — повод воевать.
+      if (b.qty < need[k]) {
+        civ.unmet[k] = need[k] - b.qty;
+        const stock = Math.floor(S.market.stock[k] ?? 0);
+        if (stock > b.qty) civ._short += Math.ceil(price(k) * Math.min(need[k] - b.qty, stock - b.qty));
+      }
     }
-    // Склады ломятся — продают четверть излишков (только дерево/камень/еду).
+    // Склады ломятся — продают часть излишков (кроме камня, нужного на стену).
     for (const k of ["wood", "stone", "andesite", "food"]) {
+      if (k === "stone" && wallLeft(civ) > 0) continue;
       if (spare[k] > 400) {
         const q = Math.min(CAP[k], Math.floor(spare[k] / 6));
         const got = sell(civ, k, q);
@@ -173,6 +189,19 @@ export function marketTick() {
     S.market.stock[k] = st + (TARGET[k] / 2 - st) * 0.06;
   }
   saveMarket();
+}
+
+/** Продать излишки, чтобы набрать нужную сумму (для выплаты долга). Возвращает вырученное. */
+export function raiseCoins(civ, amount) {
+  if (civ.marketBan) return 0;
+  const spare = spareOf(civ);
+  let got = 0;
+  for (const r of Object.keys(spare).sort((a, b) => spare[b] * price(b) - spare[a] * price(a))) {
+    if (got >= amount || spare[r] <= 0) continue;
+    const q = Math.min(spare[r], Math.ceil((amount - got) / (price(r) * BID)), CAP[r]);
+    got += sell(civ, r, q);
+  }
+  return got;
 }
 
 /** Текст для меню рынка. */

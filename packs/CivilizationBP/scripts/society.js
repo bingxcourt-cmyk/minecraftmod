@@ -668,6 +668,27 @@ export function floodCheck(civ) {
 }
 
 // ---------- Гибель цивилизации ----------
+function lifespan(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return h ? `${h} ч ${m} мин` : `${m} мин`;
+}
+
+/** Строка некролога: от чего пала, сколько прожила, каких высот достигла. */
+function epitaph(civ, enemy) {
+  const c = civ.causes ?? {};
+  let cause;
+  if (enemy && civ.war?.reason === "долг") cause = `не выплатила кредит — уничтожена кредитором ${enemy.name} и его союзниками`;
+  else if (enemy) cause = `уничтожена в войне с ${enemy.name}${civ.war?.reason ? ` (${civ.war.reason})` : ""}`;
+  else {
+    const top = Object.entries(c).sort((a, b) => b[1] - a[1])[0];
+    const why = { starve: "все умерли от голода", raid: "разграблена и перебита бандитами", mob: "жителей перебили мобы", war: "погибла в войнах" };
+    cause = top ? why[top[0]] ?? "жители вымерли" : "жители вымерли или разбрелись";
+    if (civ.defaulted) cause += "; до этого отказалась платить по кредиту";
+  }
+  const deaths = Object.entries(c).map(([k, v]) => `${{ starve: "голод", raid: "бандиты", mob: "мобы", war: "война" }[k] ?? k} ${v}`).join(", ");
+  return `${civ.name}: ${cause}. Просуществовала ${lifespan(S.clock - (civ.founded ?? S.clock))}, максимум жителей ${civ.peakPop ?? 0}, эпоха «${ERAS[civ.era].name}», построек ${civ.buildings.length}${deaths ? `; погибшие: ${deaths}` : ""}`;
+}
 export function collapseCheck(civ) {
   const dim = DIM();
   // Вдали от игрока цивилизация гибнет, когда по фоновой симуляции не осталось жителей.
@@ -695,6 +716,7 @@ export function collapseCheck(civ) {
     world.sendMessage(`§4[Цивилизации] Цивилизация ${civ.color}${civ.name}§4 пала.`);
   }
   note("events", enemy ? `${enemy.name} уничтожили ${civ.name}` : `Цивилизация ${civ.name} пала`);
+  note("fallen", epitaph(civ, enemy));
   deleteCiv(civ);
   return true;
 }

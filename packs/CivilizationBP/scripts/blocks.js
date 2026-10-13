@@ -109,9 +109,14 @@ export function groundAt(dim, x, z) {
   return undefined;
 }
 
+// Калитки в стене: свои жители проходят, бандиты и вражеские армии — нет (им приходится ломать стену).
+export const GATE = { hostile: false };
+
 // Можно ли стоять «ногами» в этом блоке.
 export function canPass(b) {
-  return !!b && (b.isAir || b.isLiquid || isPassableId(b.typeId));
+  if (!b) return false;
+  if (b.typeId.endsWith("fence_gate")) return !GATE.hostile;
+  return b.isAir || b.isLiquid || isPassableId(b.typeId);
 }
 
 // Можно ли стоять на этом блоке.

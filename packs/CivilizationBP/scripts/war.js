@@ -4,6 +4,7 @@ import { standY } from "./blocks.js";
 import { setTarget, near, updateTag } from "./workers.js";
 import { TIERS, useTool } from "./tools.js";
 import { abstractBattle } from "./offscreen.js";
+import { splitDebtLoot, cancelDebt, debtOf } from "./credit.js";
 import { has, popOf, count } from "./society.js";
 import { note, warStart, warEnd } from "./journal.js";
 
@@ -22,16 +23,20 @@ function title(civs, text, sub) {
   }
 }
 
-export function declareWar(a, b) {
-  a.war = { enemy: b.id, since: S.clock, startPop: popOf(a) };
-  b.war = { enemy: a.id, since: S.clock, startPop: popOf(b) };
+// Названия ресурсов для причин войны.
+const RES_RU = { wood: "дерево", stone: "камень", food: "еду", iron: "железо", coal: "уголь", andesite: "андезит", saplings: "саженцы", diamond: "алмазы", coins: "монеты", torches: "факелы" };
+
+export function declareWar(a, b, opts = {}) {
+  const reason = opts.reason ?? "соперничество";
+  a.war = { enemy: b.id, since: S.clock, startPop: popOf(a), reason, res: opts.res, loan: opts.loan };
+  b.war = { enemy: a.id, since: S.clock, startPop: popOf(b), reason, res: opts.res, defending: true };
   a.warLosses = 0;
   b.warLosses = 0;
   a._reassign = true;
   b._reassign = true;
   markDirty(a);
   markDirty(b);
-  warStart(a, b);
+  warStart(a, b, reason);
   title([a, b], "§cВОЙНА!", `${a.color}${a.name} §7против ${b.color}${b.name}`);
   sound(DIM(), "raid.horn", a.center, 1);
   sound(DIM(), "raid.horn", b.center, 1);
@@ -39,6 +44,15 @@ export function declareWar(a, b) {
 
 function makePeace(a, b, msg) {
   warEnd(a, b, msg);
+  for (const c of [a, b]) {
+    // Союзники в войне за долг тоже расходятся.
+    for (const o of S.civs.values()) {
+      if (o.war?.ally === c.id) {
+        o.war = null;
+        o._reassign = true;
+      }
+    }
+  }
   a.war = null;
   b.war = null;
   a.tension[b.id] = 0;
@@ -53,21 +67,44 @@ function makePeace(a, b, msg) {
 }
 
 function surrender(loser, winner) {
+  // Война за долг: всё, что успели забрать, делят 50/50 кредитор и союзники.
+  const debt = splitDebtLoot(loser, winner);
+  if (debt) return makePeace(loser, winner, `${loser.name} сдались; ${debt}`);
+  if (winner.war?.reason === "долг") cancelDebt(winner, loser);
+  // Обычная война — забирают в первую очередь то, ради чего воевали.
+  const want = winner.war?.res;
   const loot = {};
   for (const k in loser.res) {
-    loot[k] = Math.floor(loser.res[k] * 0.4);
+    loot[k] = Math.floor(loser.res[k] * (k === want ? 0.6 : 0.25));
     loser.res[k] -= loot[k];
     winner.res[k] = (winner.res[k] ?? 0) + loot[k];
   }
-  makePeace(
-    loser,
-    winner,
-    `§6[Война] ${loser.color}${loser.name}§6 сдались и заплатили дань ${winner.color}${winner.name}§6: ` +
-      `дерево ${loot.wood}, камень ${loot.stone}, еда ${loot.food}, железо ${loot.iron}.`
-  );
+  let coins = 0;
+  if (want === "coins") {
+    coins = Math.floor((loser.coins ?? 0) * 0.5);
+    loser.coins -= coins;
+    winner.coins = (winner.coins ?? 0) + coins;
+  }
+  const got = Object.entries(loot).filter(([, v]) => v > 0).map(([k, v]) => `${RES_RU[k] ?? k} ${v}`);
+  if (coins) got.unshift(`монеты ${coins}`);
+  makePeace(loser, winner, `${loser.name} сдались и заплатили дань ${winner.name}: ${got.join(", ") || "нечего было взять"}`);
 }
 
-/** Раз в 30 секунд: растёт напряжение между соседями, объявляются войны и заключается мир. */
+/**
+ * Зачем a воевать с b? Только из-за дефицита: не хватает чего-то, что не купить на рынке
+ * (нет товара или рынок закрыт), а у соседа этого много; голод; пустая казна у бедных при богатом соседе.
+ */
+function motive(a, b) {
+  if (a.starving && (b.res.food ?? 0) > popOf(b) * 4 + 20) return { reason: "голод — за еду", res: "food" };
+  for (const k of Object.keys(a.unmet ?? {})) {
+    if (k === "saplings") continue;
+    if ((b.res[k] ?? 0) > (a.unmet[k] ?? 0) * 2 + 20) return { reason: `дефицит — за ${RES_RU[k] ?? k}`, res: k };
+  }
+  if ((a.coins ?? 0) < 20 && (b.coins ?? 0) > 600 && !debtOf(a)) return { reason: "бедность — за монеты", res: "coins" };
+  return null;
+}
+
+/** Раз в 30 секунд: напряжение растёт только при реальной причине, иначе спадает. */
 export function diplomacyTick() {
   const civs = [...S.civs.values()];
   for (let i = 0; i < civs.length; i++) for (let j = i + 1; j < civs.length; j++) {
@@ -78,18 +115,20 @@ export function diplomacyTick() {
     if ((a.peace[b.id] ?? 0) > S.clock || a.war || b.war) continue;
     // Враждуют только окрепшие поселения.
     if (popOf(a) < 4 || popOf(b) < 4 || count(a, () => true) < 3 || count(b, () => true) < 3) continue;
-    let t = (a.tension[b.id] ?? 0) + 1 + rnd(0, 2);
-    if (dist < 100) t += 1;
-    if (a.starving || b.starving) t += 8;
-    if (a.era !== b.era) t += 1;
+    const ma = motive(a, b);
+    const mb = motive(b, a);
+    let t = a.tension[b.id] ?? 0;
+    if (ma || mb) t += 6 + rnd(0, 4) + (dist < 100 ? 2 : 0);
+    else t = Math.max(0, t - 2);
     a.tension[b.id] = t;
     b.tension[a.id] = t;
     markDirty(a);
     markDirty(b);
     if (t >= 100) {
-      // Нападает голодный или более сильный.
-      const attacker = a.starving && !b.starving ? a : b.starving && !a.starving ? b : popOf(a) >= popOf(b) ? a : b;
-      declareWar(attacker, attacker === a ? b : a);
+      const attacker = ma ? a : b;
+      const target = attacker === a ? b : a;
+      const m = ma ?? mb;
+      declareWar(attacker, target, m);
     }
   }
   for (const civ of civs) {
@@ -100,20 +139,26 @@ export function diplomacyTick() {
       civ._reassign = true;
       continue;
     }
-    if (civ.id > enemy.id) continue;
+    // Пара обрабатывается один раз; союзники — отдельной парой против должника.
+    const mutual = enemy.war?.enemy === civ.id;
+    if (mutual && civ.id > enemy.id) continue;
     // Хотя бы одна армия далеко от игрока — сражение считается по формуле.
     if (civ._active === false || enemy._active === false) abstractBattle(civ, enemy);
+    if (!mutual) continue; // союзник: сдачу решает пара «кредитор — должник»
     const needA = Math.max(3, Math.ceil((civ.war.startPop ?? 4) * 0.5));
     const needB = Math.max(3, Math.ceil((enemy.war?.startPop ?? 4) * 0.5));
     if (civ.warLosses >= needA && popOf(civ) > 0) surrender(civ, enemy);
     else if (enemy.warLosses >= needB && popOf(enemy) > 0) surrender(enemy, civ);
-    else if (S.clock - civ.war.since > 600) {
-      makePeace(civ, enemy, `§a[Мир] ${civ.color}${civ.name}§a и ${enemy.color}${enemy.name}§a устали от войны и заключили мир.`);
+    else if (S.clock - civ.war.since > (civ.war.reason === "долг" ? 1200 : 600)) {
+      if (civ.war.reason === "долг") {
+        const lender = civ.war.defending ? enemy : civ;
+        cancelDebt(lender === civ ? enemy : civ, lender);
+      }
+      makePeace(civ, enemy, `${civ.name} и ${enemy.name} устали от войны и заключили мир`);
     }
   }
 }
 
-// Урон воина зависит от меча (как у Стива) и от казарм/эпохи.
 function damageOf(civ, brain, ent) {
   if (brain.role === "golem") return 10;
   const use = useTool(ent, "sword");

@@ -1,7 +1,9 @@
 import { world, system } from "@minecraft/server";
 import { S, saveAll } from "./core.js";
 import { offscreenTick } from "./offscreen.js";
-import { diplomacyTick } from "./war.js";
+import { diplomacyTick, declareWar } from "./war.js";
+import { progressWalls } from "./walls.js";
+import { creditTick } from "./credit.js";
 import { progressRoads, planRoads } from "./links.js";
 import { marketTick } from "./market.js";
 import { popOf } from "./society.js";
@@ -45,12 +47,14 @@ export function catchUp(onDone) {
         yield;
       }
       progressRoads(STEP);
+      progressWalls(STEP);
       if (s % 5 === 0) planRoads();
       try {
         diplomacyTick();
         diplomacyTick(); // раз в 30 секунд — два раза за минуту
         marketTick();
         marketTick();
+        creditTick(declareWar);
       } catch {}
       yield;
     }

@@ -2,10 +2,10 @@ import { world, system } from "@minecraft/server";
 import { S, P, DIM, getProp, setProp, isNight, loaded, loadAll, saveAll, markDirty } from "./core.js";
 import { brainOf, moveStep, think, resetTask, updateTag, resetPathBudget } from "./workers.js";
 import {
-  assignRoles, searchTick, mineTick, hungerTick, growthTick, eraTick, colonyTick, colonyCheck,
+  assignRoles, searchTick, mineTick, popOf, hungerTick, growthTick, eraTick, colonyTick, colonyCheck,
   settlerThink, completeProject, collapseCheck, foundingScan, floodCheck, streamBuild,
 } from "./society.js";
-import { diplomacyTick, soldierThink, warBuffs, golemTick } from "./war.js";
+import { diplomacyTick, soldierThink, warBuffs, golemTick, declareWar } from "./war.js";
 import { statusTick, onInteractBlock, onScriptEvent, onItemUse } from "./ui.js";
 import { loadRoads, planRoads, layRoads } from "./links.js";
 import { loadMarket, marketTick } from "./market.js";
@@ -14,12 +14,15 @@ import { rescueIfStuck } from "./nav.js";
 import { isActive, offscreenTick, materialize, takeCensus } from "./offscreen.js";
 import { whTick } from "./wh.js";
 import { heldTick, heldCleanup, dropHeld } from "./held.js";
-import { scanThreats } from "./defense.js";
+import { scanThreats, armorTick } from "./defense.js";
+import { raidTick, raidCheck, raiderThink, raidPropOf } from "./bandits.js";
+import { planWall, layWalls } from "./walls.js";
+import { creditTick, loadLoans, saveLoans } from "./credit.js";
 import { lightsTick } from "./lights.js";
 import { note, warLog, loadJournal, saveJournal } from "./journal.js";
 
-const hooks = { onComplete: completeProject, soldier: soldierThink, settler: settlerThink };
-const ALWAYS_AWAKE = new Set(["soldier", "golem", "settler", "guard"]);
+const hooks = { onComplete: completeProject, soldier: soldierThink, settler: settlerThink, raider: raiderThink };
+const ALWAYS_AWAKE = new Set(["soldier", "golem", "settler", "guard", "raider"]);
 
 /** Раз в секунду пересобирает списки жителей по цивилизациям. */
 function regroup() {
@@ -29,6 +32,10 @@ function regroup() {
   try {
     villagers = dim.getEntities({ type: "minecraft:villager_v2" });
     golems = dim.getEntities({ type: "minecraft:iron_golem" });
+  } catch {}
+  let raiders = [];
+  try {
+    raiders = [...dim.getEntities({ type: "minecraft:pillager" }), ...dim.getEntities({ type: "minecraft:vindicator" })];
   } catch {}
   S.members = new Map();
   S.golems = new Map();
@@ -61,6 +68,13 @@ function regroup() {
     brainOf(g, cid).role = "golem";
     seen.add(g.id);
   }
+  // Бандиты, напавшие на поселение.
+  for (const r of raiders) {
+    const cid = raidPropOf(r);
+    if (typeof cid !== "string" || !S.civs.has(cid)) continue;
+    brainOf(r, cid).role = "raider";
+    seen.add(r.id);
+  }
   for (const [id, b] of S.brains) {
     if (!seen.has(id)) {
       resetTask(b);
@@ -82,6 +96,8 @@ function everySecond() {
       if (collapseCheck(civ)) continue;
       // Факелы и фонари расставляются везде, где чанки загружены (и вблизи, и в зоне прорисовки).
       lightsTick(civ);
+      civ.peakPop = Math.max(civ.peakPop ?? 0, popOf(civ));
+      if (S.clock % 30 === 3) planWall(civ);
       if (!civ._active) {
         // Далеко от игрока — фоновая симуляция раз в 10 секунд.
         civ._activeFor = 0;
@@ -116,7 +132,10 @@ function everySecond() {
         colonyTick(civ);
         golemTick(civ);
       }
+      raidCheck(civ);
+      if (S.clock % 60 === 33) raidTick(civ);
       if (S.clock % 10 === 0) {
+        armorTick(civ);
         eraTick(civ);
         warBuffs(civ);
         for (const e of S.members.get(civ.id) ?? []) updateTag(e, brainOf(e, civ.id), civ);
@@ -129,7 +148,9 @@ function everySecond() {
     if (S.clock % 30 === 0) diplomacyTick();
     if (S.clock % 60 === 15) planRoads();
     if (S.clock % 30 === 20) marketTick();
+    if (S.clock % 60 === 50) creditTick(declareWar);
     layRoads();
+    layWalls();
     if (S.clock % 5 === 0) foundingScan();
     statusTick();
   } catch (e) {
@@ -138,6 +159,7 @@ function everySecond() {
   if (S.clock % 5 === 0) {
     saveAll();
     saveJournal();
+    if (S.clock % 30 === 0) saveLoans();
     markRealTime();
     showReport();
   }
@@ -216,25 +238,42 @@ function onDeath(ev) {
   dropHeld(brain);
   const civ = S.civs.get(brain.civId);
   if (!civ) return;
+  // Убит бандит — считаем для итогов набега.
+  if (brain.role === "raider") {
+    civ.raidKills = (civ.raidKills ?? 0) + 1;
+    return;
+  }
   civ.deaths++;
+  civ.causes = civ.causes ?? {};
   markDirty(civ);
   const killer = ev.damageSource.damagingEntity;
   let kb;
+  let ktype = "";
   try {
     kb = killer ? S.brains.get(killer.id) : undefined;
+    ktype = killer?.typeId ?? "";
   } catch {}
   const name = brain.role === "golem" ? "Железный страж" : brain.name;
-  if (kb && civ.war && kb.civId === civ.war.enemy) {
+  const enemy = kb ? S.civs.get(kb.civId) : undefined;
+  // Враг — любая цивилизация, которая воюет с этой (в том числе союзники кредитора).
+  if (enemy && enemy !== civ && (enemy.war?.enemy === civ.id || civ.war?.enemy === enemy.id)) {
     civ.warLosses++;
-    const enemy = S.civs.get(kb.civId);
-    if (enemy) {
-      enemy.kills++;
-      markDirty(enemy);
+    civ.causes.war = (civ.causes.war ?? 0) + 1;
+    enemy.kills++;
+    markDirty(enemy);
+    warLog(civ, enemy, `гибель в бою: ${name} (${civ.name})`);
+    if (enemy.war?.ally) {
+      const lender = S.civs.get(enemy.war.ally);
+      if (lender) warLog(lender, civ, `${enemy.name} (союзник) убили ${name}`);
     }
-    if (enemy) warLog(civ, enemy, `гибель в бою: ${name} (${civ.name})`);
+  } else if (kb?.role === "raider" || ktype === "minecraft:pillager" || ktype === "minecraft:vindicator") {
+    civ.causes.raid = (civ.causes.raid ?? 0) + 1;
+    note("people", `${civ.name}: убит бандитами — ${name}`);
   } else if (ev.damageSource.cause === "starve") {
+    civ.causes.starve = (civ.causes.starve ?? 0) + 1;
     note("people", `${civ.name}: смерть от голода — ${name}`);
   } else {
+    civ.causes.mob = (civ.causes.mob ?? 0) + 1;
     note("people", `${civ.name}: гибель — ${name}`);
   }
 }
@@ -246,6 +285,7 @@ function start() {
   loadAll();
   loadRoads();
   loadMarket();
+  loadLoans();
   loadJournal();
   catchUp();
   system.runInterval(moveAll, 2);
