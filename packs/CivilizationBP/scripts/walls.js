@@ -242,7 +242,8 @@ export function replanWall(civ) {
   old.cols.forEach((c, i) => {
     if (keep.has(i)) return;
     if (st[i] === "1") removed.push(c);
-    if (st[i] !== "0") refund += st[i] === "1" ? WALL_STONE - 2 : WALL_STONE;
+    // Возврат камня — только за то, что стоит или оплачено (снесённое под стройку уже возвращали).
+    if (st[i] === "1" || st[i] === "p") refund += st[i] === "1" ? WALL_STONE - 2 : WALL_STONE;
   });
   if (!added && !removed.length && s === st) return;
   civ.res.stone = (civ.res.stone ?? 0) + refund;
@@ -262,7 +263,7 @@ export function clearWallFor(civ, rect) {
   g.cols.forEach((c, i) => {
     if (c.x < rect.x - 1 || c.x > rect.x + rect.w || c.z < rect.z - 1 || c.z > rect.z + rect.d) return;
     if (chars[i] === "1") gone.push(c);
-    if (chars[i] !== "0") civ.res.stone = (civ.res.stone ?? 0) + (chars[i] === "1" ? WALL_STONE - 2 : WALL_STONE);
+    if (chars[i] === "1" || chars[i] === "p") civ.res.stone = (civ.res.stone ?? 0) + (chars[i] === "1" ? WALL_STONE - 2 : WALL_STONE);
     chars[i] = "x";
   });
   if (!gone.length && chars.join("") === civ.wall.s) return 0;
@@ -326,7 +327,8 @@ function placeColumn(civ, g, i) {
   if (!top) return false;
   const base = levelOf(civ);
   // Дорога на уровне поселения — здесь калитка; верх уже стоящей стены дорогой не считается.
-  const road = ROADISH.has(top.typeId) && gr.y <= base + 1;
+  // (кирпич ниже уровня — остаток фундамента, а не дорога)
+  const road = ROADISH.has(top.typeId) && gr.y <= base + 1 && !(top.typeId === "minecraft:stone_bricks" && gr.y < base);
   const ownWall = top.typeId === "minecraft:stone_bricks" && gr.y > base + 1;
   if (gr.unnatural && !road && !ownWall) return true; // дом или чужая постройка — обходим
   if (gr.y < base - 12 || gr.y > base + 12) return true; // обрыв или скала — столб пропускают
@@ -424,7 +426,8 @@ export function setRoadGates(civ, keys) {
 function clearColumn(dim, p) {
   const g = groundAt(dim, p.x, p.z);
   if (!g) return false;
-  for (let y = g.y + 1; y > g.y - 10; y--) {
+  // Вниз до настоящей земли — вместе с фундаментом любой глубины.
+  for (let y = g.y + 1; y > g.y - 40; y--) {
     const b = getB(dim, p.x, y, p.z);
     if (!b) break;
     const id = b.typeId;

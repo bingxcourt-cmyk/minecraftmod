@@ -47,6 +47,13 @@ function regroup() {
   const seen = new Set();
   for (const v of villagers) {
     const cid = getProp(v, P.CIV);
+    // Переселенец, который уже «ушёл» в колонию вдали (его учли там), — в старом поселении не появляется.
+    if (typeof cid === "string" && S.civs.get(cid)?.goneIds?.includes(v.id)) {
+      try {
+        v.remove();
+      } catch {}
+      continue;
+    }
     if (typeof cid === "string" && S.civs.has(cid)) {
       if (!S.members.has(cid)) S.members.set(cid, []);
       S.members.get(cid).push(v);

@@ -18,7 +18,7 @@ const COST = {
   oak_stairs: { wood: 1 }, spruce_stairs: { wood: 1 }, dark_oak_stairs: { wood: 1 },
   stone_brick_stairs: { stone: 1 }, stone_stairs: { stone: 1 },
   oak_slab: { wood: 1 }, spruce_slab: { wood: 1 }, stone_brick_slab: { stone: 1 },
-  spruce_door: { wood: 2 }, spruce_trapdoor: { wood: 1 }, oak_pressure_plate: { wood: 1 },
+  spruce_door: { wood: 2 }, spruce_trapdoor: { wood: 1 }, wooden_pressure_plate: { wood: 1 },
   stripped_oak_log: { wood: 2 }, stripped_spruce_log: { wood: 2 }, chiseled_stone_bricks: { stone: 1 },
   cracked_stone_bricks: { stone: 1 }, polished_andesite: { andesite: 1 }, flower_pot: {},
   oak_leaves: {}, grindstone: { stone: 2, wood: 1 }, cauldron: { iron: 3 }, carved_pumpkin: { food: 1 }, gravel: {},
@@ -158,9 +158,9 @@ function hut() {
   for (const x of [0, 6]) for (let y = 1; y <= 3; y++) b.set(x, y, 0, "oak_fence");
   windows(b, [[0, 3], [0, 4], [6, 3], [6, 4], [2, 6], [4, 6], [1, 1], [5, 1]], [2]);
   b.gable(0, 0, 6, 6, 4, "spruce_stairs", "spruce_planks", "spruce_slab");
-  b.bed(1, 1, 5, 0);
-  b.bed(3, 1, 5, 0);
-  b.bed(5, 1, 5, 0);
+  b.bed(1, 1, 5, 2);
+  b.bed(3, 1, 5, 2);
+  b.bed(5, 1, 5, 2);
   b.set(1, 1, 2, "torch");
   b.set(5, 1, 2, "crafting_table");
   b.set(4, 1, 2, "flower_pot");
@@ -244,14 +244,14 @@ function house() {
   b.set(7, 1, 4, "barrel");
   for (const x of [3, 4]) {
     b.set(x, 1, 5, "oak_fence");
-    b.set(x, 2, 5, "oak_pressure_plate");
+    b.set(x, 2, 5, "wooden_pressure_plate");
   }
   b.set(1, 1, 5, "bookshelf");
   b.set(1, 1, 6, "bookshelf");
   b.set(5, 1, 3, "torch");
-  b.bed(2, 5, 7, 0);
-  b.bed(4, 5, 7, 0);
-  b.bed(6, 5, 7, 0);
+  b.bed(2, 5, 7, 2);
+  b.bed(4, 5, 7, 2);
+  b.bed(6, 5, 7, 2);
   b.bed(7, 5, 4, 0);
   b.set(3, 5, 3, "torch");
   b.set(2, 1, 0, "flower_pot");
@@ -286,10 +286,10 @@ function stonehouse() {
   for (const z of [6, 7, 8]) b.set(1, 1, z, "bookshelf");
   for (const x of [3, 4, 5]) {
     b.set(x, 1, 5, "oak_fence");
-    b.set(x, 2, 5, "oak_pressure_plate");
+    b.set(x, 2, 5, "wooden_pressure_plate");
   }
   b.set(4, 1, 8, "lantern");
-  for (const x of [2, 4, 6]) b.bed(x, 5, 9, 0);
+  for (const x of [2, 4, 6]) b.bed(x, 5, 9, 2);
   b.bed(2, 5, 3, 2);
   b.bed(5, 5, 3, 2);
   b.set(4, 5, 6, "lantern");
@@ -336,7 +336,7 @@ function barn() {
   for (const x of [0, 8]) for (const z of [3, 7]) for (let y = 1; y <= 5; y++) b.set(x, y, z, "dark_oak_log");
   b.door(4, 0, 3, 3);
   for (const x of [3, 4, 5]) b.set(x, 4, 0, "dark_oak_planks");
-  windows(b, [[0, 5], [8, 5]], [3]);
+  windows(b, [[0, 5], [8, 6]], [3]); // у (8, 5) изнутри лестница — окно сдвинуто
   // Ломаная (голландская) крыша: крутые нижние скаты и пологий верх.
   for (let z = 0; z <= 10; z++) {
     b.set(0, 6, z, "dark_oak_stairs", { weirdo_direction: 0, upside_down_bit: false });
@@ -372,7 +372,7 @@ function watchtower() {
   b.ring(1, 1, 5, 5, 1, "mossy_stone_bricks");
   for (const [x, z] of [[1, 1], [5, 1], [1, 5], [5, 5]]) for (let y = 1; y <= 10; y++) b.set(x, y, z, "spruce_log");
   b.realDoor(3, 1);
-  windows(b, [[3, 5], [1, 3], [5, 3]], [4, 7]);
+  windows(b, [[1, 3], [5, 3]], [4, 7]); // на северной стене (3, 5) — лестница, окна там нет
   b.set(3, 7, 1, "glass_pane");
   for (let y = 1; y <= 11; y++) b.set(3, y, 4, "ladder", { facing_direction: 2 });
   b.box(0, 11, 0, 6, 11, 6, "spruce_planks");
@@ -424,7 +424,7 @@ function townhall() {
   b.box(13, 1, 3, 13, 3, 3, "bookshelf");
   for (let x = 4; x <= 10; x++) {
     b.set(x, 1, 6, "oak_fence");
-    b.set(x, 2, 6, "oak_pressure_plate");
+    b.set(x, 2, 6, "wooden_pressure_plate");
   }
   for (const [x, z] of [[3, 4], [11, 4], [3, 8], [11, 8], [7, 8]]) b.set(x, 1, z, "lantern");
   for (const x of [2, 12]) b.set(x, 1, 1, "flower_pot");
@@ -454,7 +454,7 @@ function barracks() {
     b.set(x, 1, 1, "hay_block");
     b.set(x, 2, 1, "carved_pumpkin");
   }
-  for (const x of [1, 3, 7, 9]) b.bed(x, 1, 7, 0);
+  for (const x of [1, 3, 7, 9]) b.bed(x, 1, 7, 2);
   b.bed(1, 1, 5, 2);
   b.bed(9, 1, 5, 2);
   b.set(3, 1, 4, "smithing_table");
@@ -513,7 +513,7 @@ function castle() {
   b.set(9, 1, k1 - 1, "bell");
   b.set(10, 6, k1 - 1, "lectern");
   b.box(k1 - 1, 6, k0 + 1, k1 - 1, 7, k0 + 2, "bookshelf");
-  for (const x of [k0 + 2, k0 + 4]) b.bed(x, 11, k1 - 1, 0);
+  for (const x of [k0 + 2, k0 + 4]) b.bed(x, 11, k1 - 1, 2);
   for (const x of [8, 10]) b.bed(x, 6, k0 + 2, 2);
   for (const [x, z] of [[k0 + 2, k0 + 2], [k1 - 2, k0 + 2]]) {
     b.set(x, 1, z, "lantern");

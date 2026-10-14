@@ -3,7 +3,7 @@ import {
   S, P, DIM, getB, getProp, setProp, dXZ, rnd, pick, markDirty, announce, sound, particle, loaded,
   civName, civColor, personName, deleteCiv, playersNear, isNight, levelOf,
 } from "./core.js";
-import { groundAt, standY, waterNear, findDrySpot } from "./blocks.js";
+import { groundAt, standY, waterNear, findDrySpot, isPassableId } from "./blocks.js";
 import { TYPES, getBP, dims, doorFront, toWorld } from "./blueprints.js";
 import { brainOf, setRole, updateTag, resetTask, remainingCost, fastBuild } from "./workers.js";
 import { findSafeSpot, safeTeleport } from "./nav.js";
@@ -432,7 +432,10 @@ function validate(civ, c, gap = 2) {
     return undefined;
   }
   const dim = DIM();
-  if (!loaded(dim, c) || !loaded(dim, { x: c.x + c.W, z: c.z + c.D })) return undefined;
+  if (!loaded(dim, c) || !loaded(dim, { x: c.x + c.W, z: c.z + c.D })) {
+    c.unloaded = true; // место просто далеко от игрока — это не «негде строить»
+    return undefined;
+  }
   let min = 1e9;
   let max = -1e9;
   let sum = 0;
@@ -456,6 +459,8 @@ function validate(civ, c, gap = 2) {
   const base = center ? Math.round(sum / cells) : levelOf(civ);
   if (center && max - min > 4) return undefined;
   if (!center && (min < base - 6 || max > base + 5)) return undefined;
+  // Высокая постройка не должна упираться в потолок мира (иначе стройка никогда не закончится).
+  if (base + dims(c.t, c.r).H + 3 > 319) return undefined;
   let fill = 0;
   for (const y of hs) fill += Math.max(0, base - 1 - y);
   // Рядом с водой не строим: выровняют площадку ниже уровня воды — и всё затопит.
@@ -497,6 +502,7 @@ export function searchTick(civ, paidOnly = false, tries = 4) {
     const c = s.cands[s.i++];
     const v = validate(civ, c);
     if (!v) {
+      if (c.unloaded) s.unloaded = (s.unloaded ?? 0) + 1;
       if (c.blocked) {
         s.crowd = (s.crowd ?? 0) + 1;
         s.by = c.blocked;
@@ -515,6 +521,11 @@ export function searchTick(civ, paidOnly = false, tries = 4) {
   }
   if (s.i >= s.cands.length) {
     S.search.delete(civ.id);
+    // Часть мест в незагруженных чанках — оплаченную постройку не выбрасываем, попробуем позже.
+    if (s.unloaded) {
+      civ._streamWait = S.clock + 15;
+      return;
+    }
     if (s.paid) civ.offQueue.shift();
     // Места не нашлось — не забываем постройку, а пробуем позже (за это время могут вырубить лес и т.п.).
     civ.failed = civ.failed ?? {};
@@ -615,8 +626,10 @@ function layRoad(from, to) {
         const above = getB(dim, x + ox, g.y + 1, z + oz);
         if (!b || !above) continue;
         if (["minecraft:grass_block", "minecraft:dirt", "minecraft:coarse_dirt", "minecraft:podzol", "minecraft:mycelium"].includes(b.typeId)) {
+          // Тропинка не срезает деревья и саженцы: убирают только траву и цветы.
+          if (!above.isAir && !(isPassableId(above.typeId) && !above.typeId.endsWith("sapling"))) continue;
           try {
-            if (!above.isAir && above.typeId !== "minecraft:grass_path") above.setType("minecraft:air");
+            if (!above.isAir) above.setType("minecraft:air");
             b.setType("minecraft:grass_path");
           } catch {}
         }
@@ -685,6 +698,15 @@ export function colonyCheck(civ) {
   const settlers = (S.members.get(civ.id) ?? []).filter((e) => c.ids.includes(e.id) && e.isValid);
   const elapsed = S.clock - c.since;
   const arrived = settlers.length > 0 && settlers.every((e) => dXZ(e.location, c) < 8);
+  // Переселенцы ушли за пределы прорисовки (их сущности выгрузились) — колония основывается там без игрока.
+  if (settlers.length === 0 && elapsed > 20 && !loaded(DIM(), c)) {
+    civ.colony = null;
+    civ._reassign = true;
+    civ.goneIds = [...(civ.goneIds ?? []), ...c.ids].slice(-40);
+    virtualColony(civ, c, c.ids.length, false);
+    markDirty(civ);
+    return;
+  }
   if (settlers.length === 0 || elapsed > 240) {
     civ.colony = null;
     civ._reassign = true;
@@ -742,7 +764,7 @@ export function colonyCheck(civ) {
  * (в пределах прорисовки, даже если поселение далеко).
  */
 export function streamBuild(civ) {
-  if (civ._fastJob) return;
+  if (civ._fastJob || (civ._streamWait ?? 0) > S.clock) return;
   if (!civ.project?.paid && !(civ.offQueue?.length && !civ.project)) return;
   civ._fastJob = true;
   // Всё, что оплачено в фоне, возводится подряд, без пауз: место ищут сразу по многим вариантам,
@@ -758,6 +780,7 @@ export function streamBuild(civ) {
         if (!civ.project) {
           if (!civ.offQueue?.length) break;
           searchTick(civ, true, 12);
+          if ((civ._streamWait ?? 0) > S.clock) break; // места в незагруженных чанках — позже
           if (!civ.project) {
             if (++misses > 400) break; // мест нет — попробуют в следующий раз
             yield;

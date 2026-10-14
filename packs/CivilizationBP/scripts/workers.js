@@ -668,11 +668,24 @@ function canPay(civ, cost) {
   return null;
 }
 
+// Состояние блока; если в этой версии игры оно называется иначе (у дверей «direction» заменили на
+// «minecraft:cardinal_direction»), пробуем новое имя.
+const CARD = ["east", "south", "west", "north"];
+function perm(id, st) {
+  try {
+    return BlockPermutation.resolve(id, st);
+  } catch (e) {
+    if (st?.direction === undefined) throw e;
+    const { direction, ...rest } = st;
+    return BlockPermutation.resolve(id, { ...rest, "minecraft:cardinal_direction": CARD[direction & 3] });
+  }
+}
+
 function placeOp(dim, op) {
   const b = getB(dim, op.x, op.y, op.z);
   if (!b) return false;
   try {
-    if (op.st) b.setPermutation(BlockPermutation.resolve(op.id, op.st));
+    if (op.st) b.setPermutation(perm(op.id, op.st));
     else b.setType(op.id);
   } catch {
     try {
@@ -685,7 +698,7 @@ function placeOp(dim, op) {
   if (op.pair) {
     const h = getB(dim, op.pair.x, op.pair.y, op.pair.z);
     try {
-      h?.setPermutation(BlockPermutation.resolve(op.id, op.pair.st));
+      h?.setPermutation(perm(op.id, op.pair.st));
     } catch {}
   }
   return true;
@@ -723,7 +736,14 @@ export function fastBuild(civ, maxOps) {
   while (p.step < ops.length && n < maxOps) {
     const op = ops[p.step];
     const b = getB(dim, op.x, op.y, op.z);
-    if (!b) return "wait";
+    if (!b) {
+      // За пределами мира по высоте — просто пропускаем; иначе чанк ещё не загружен.
+      if (op.y > 319 || op.y < -64) {
+        p.step++;
+        continue;
+      }
+      return "wait";
+    }
     try {
       if (op.k === "c") {
         if (!b.isAir && !isProtected(b.typeId) && !(op.ramp && !rampOk(civ, op, b.typeId))) b.setType("minecraft:air");
@@ -750,7 +770,13 @@ export function buildStep(civ) {
   for (let checks = 0; checks < 120 && p.step < ops.length; checks++) {
     const op = ops[p.step];
     const b = getB(dim, op.x, op.y, op.z);
-    if (!b) return false;
+    if (!b) {
+      if (op.y > 319 || op.y < -64) {
+        p.step++;
+        continue;
+      }
+      return false;
+    }
     const id = b.typeId;
     if (op.k === "c") {
       if (b.isAir || isProtected(id) || (op.ramp && !rampOk(civ, op, id))) {

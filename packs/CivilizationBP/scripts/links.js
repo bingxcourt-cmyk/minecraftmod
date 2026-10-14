@@ -17,14 +17,43 @@ const ROAD_MAX = 320; // дальше дорог не строят
 const ROAD_SKIP = 0;
 const OPP = { E: "W", W: "E", S: "N", N: "S" };
 
+// Отметки «участок положен» хранятся сжато (длины серий 0 и 1): у мира ограничение на размер записи.
+const rle = (s) => {
+  const out = [];
+  let ch = "0";
+  let n = 0;
+  for (const c of s) {
+    if (c === ch) n++;
+    else {
+      out.push(n);
+      ch = c;
+      n = 1;
+    }
+  }
+  out.push(n);
+  return out.join(".");
+};
+const unrle = (s) => {
+  if (!/^[0-9.]*$/.test(s)) return s; // старое сохранение — строка как есть
+  let ch = "0";
+  let out = "";
+  for (const n of s.split(".")) {
+    out += ch.repeat(Number(n) || 0);
+    ch = ch === "0" ? "1" : "0";
+  }
+  return out;
+};
+const pack = (r) => ({ ...r, done: rle(r.done ?? ""), z: 1 });
+const unpack = (r) => (r.z ? { ...r, done: unrle(r.done), z: undefined } : r);
+
 export function loadRoads() {
   try {
-    S.roads = JSON.parse(String(world.getDynamicProperty("civ:roads") ?? "[]"));
+    S.roads = JSON.parse(String(world.getDynamicProperty("civ:roads") ?? "[]")).map(unpack);
   } catch {
     S.roads = [];
   }
   try {
-    S.roadDemo = JSON.parse(String(world.getDynamicProperty("civ:rdemo") ?? "[]"));
+    S.roadDemo = JSON.parse(String(world.getDynamicProperty("civ:rdemo") ?? "[]")).map(unpack);
   } catch {
     S.roadDemo = [];
   }
@@ -32,8 +61,18 @@ export function loadRoads() {
 
 export function saveRoads() {
   try {
-    world.setDynamicProperty("civ:roads", JSON.stringify(S.roads ?? []));
-    world.setDynamicProperty("civ:rdemo", JSON.stringify((S.roadDemo ?? []).slice(-50)));
+    world.setDynamicProperty("civ:roads", JSON.stringify((S.roads ?? []).map(pack)));
+  } catch (e) {
+    console.warn(`[Цивилизации] не удалось сохранить дороги: ${e}`);
+  }
+  try {
+    let demo = (S.roadDemo ?? []).slice(-50).map(pack);
+    let text = JSON.stringify(demo);
+    while (text.length > 30000 && demo.length) {
+      demo = demo.slice(1);
+      text = JSON.stringify(demo);
+    }
+    world.setDynamicProperty("civ:rdemo", text);
   } catch {}
 }
 
@@ -71,6 +110,12 @@ function exitOf(civ, side) {
     far = Math.max(far, dx > 0 ? b.x + b.w - cx : dx < 0 ? cx - b.x : dz > 0 ? b.z + b.d - cz : cz - b.z);
   }
   return { x: cx + dx * (far + 3), z: cz + dz * (far + 3), y };
+}
+
+/** Выход B лежит дальше по направлению стороны A (хотя бы на 4 блока). */
+function forward(A, B, side) {
+  const [dx, dz] = SIDE_DIR[side];
+  return (B.x - A.x) * dx + (B.z - A.z) * dz > 4;
 }
 
 /** Ломаная из прямых участков: выход A → поворот посередине → выход B. */
@@ -172,8 +217,11 @@ export function planRoads() {
       const sb = OPP[sa];
       // У каждого поселения — не больше одной дороги на сторону света (всего до 4).
       if (usedSides(civ).has(sa) || usedSides(o).has(sb)) continue;
+      const A = exitOf(civ, sa);
+      const B = exitOf(o, sb);
+      if (!forward(A, B, sa)) continue; // выходы «смотрят» мимо друг друга — дорога пошла бы назад через поселение
       const r = { a: civ.id, b: o.id, sa, sb, pa: 0, pb: 0 };
-      shape(r, exitOf(civ, sa), exitOf(o, sb));
+      shape(r, A, B);
       S.roads.push(r);
       note("build", `${civ.name} и ${o.name} начали дорогу друг к другу (${r.done.length} блоков, каждый строит свою половину)`);
     }
@@ -183,8 +231,15 @@ export function planRoads() {
     const A = exitOf(S.civs.get(r.a), r.sa);
     const B = exitOf(S.civs.get(r.b), r.sb);
     const moved = Math.hypot(A.x - r.x1, A.z - r.z1) > 3 || Math.hypot(B.x - r.x2, B.z - r.z2) > 3 || A.y !== r.y1 || B.y !== r.y2;
+    if (!forward(A, B, r.sa)) {
+      // Поселения выросли так, что дорога пошла бы назад сквозь них, — разбираем её.
+      scrapGeometry(r);
+      r.dead = true;
+      continue;
+    }
     if (r.v !== 4 || moved) shape(r, A, B);
   }
+  S.roads = S.roads.filter((r) => !r.dead);
   // Ворота под дороги теперь — только по сторонам света.
   for (const civ of civs) setRoadGates(civ, []);
   saveRoads();
