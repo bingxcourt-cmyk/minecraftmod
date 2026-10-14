@@ -149,7 +149,16 @@ export function diplomacyTick() {
     if (mutual && civ.id > enemy.id) continue;
     // Хотя бы одна армия далеко от игрока — сражение считается по формуле.
     if (civ._active === false || enemy._active === false) abstractBattle(civ, enemy);
-    if (!mutual) continue; // союзник: сдачу решает пара «кредитор — должник»
+    if (!mutual) {
+      // Союзник в войне за долг: если кредитор исчез или уже не воюет с должником — союзник уходит домой.
+      const lender = S.civs.get(civ.war.ally);
+      if (!lender || lender.war?.enemy !== civ.war.enemy || S.clock - civ.war.since > 1500) {
+        civ.war = null;
+        civ._reassign = true;
+        markDirty(civ);
+      }
+      continue; // сдачу решает пара «кредитор — должник»
+    }
     const needA = Math.max(3, Math.ceil((civ.war.startPop ?? 4) * 0.5));
     const needB = Math.max(3, Math.ceil((enemy.war?.startPop ?? 4) * 0.5));
     if (civ.warLosses >= needA && popOf(civ) > 0) surrender(civ, enemy);

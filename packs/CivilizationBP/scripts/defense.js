@@ -26,6 +26,8 @@ export function scanThreats(civ) {
   civ._threats = list.filter((e) => {
     if (IGNORE.has(e.typeId)) return false;
     const l = e.location;
+    // Мобы в пещерах глубоко под поселением (или высоко над ним) — не угроза, туда стражу не гоняем.
+    if (Math.abs(l.y - civ.center.y) > 10) return false;
     const b = getB(dim, Math.floor(l.x), Math.floor(l.y), Math.floor(l.z));
     return !b?.isLiquid;
   });

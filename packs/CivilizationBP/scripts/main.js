@@ -13,7 +13,7 @@ import { catchUp, markRealTime, showReport } from "./offline.js";
 import { rescueIfStuck } from "./nav.js";
 import { isActive, offscreenTick, materialize, takeCensus } from "./offscreen.js";
 import { whTick } from "./wh.js";
-import { heldTick, heldCleanup, dropHeld } from "./held.js";
+import { heldTick, heldCleanup, dropHeld, swinging } from "./held.js";
 import { scanThreats, armorTick } from "./defense.js";
 import { raidTick, raidCheck, raiderThink, raidPropOf } from "./bandits.js";
 import { planWall, layWalls } from "./walls.js";
@@ -75,7 +75,14 @@ function regroup() {
   // Бандиты, напавшие на поселение.
   for (const r of raiders) {
     const cid = raidPropOf(r);
-    if (typeof cid !== "string" || !S.civs.has(cid)) continue;
+    if (typeof cid !== "string") continue;
+    // Набег уже закончился (или поселения нет) — отставшие бандиты исчезают, а не грабят снова.
+    if (!S.civs.has(cid) || !S.civs.get(cid).raid?.ids?.includes(r.id)) {
+      try {
+        r.remove();
+      } catch {}
+      continue;
+    }
     brainOf(r, cid).role = "raider";
     seen.add(r.id);
   }
@@ -84,6 +91,7 @@ function regroup() {
       resetTask(b);
       dropHeld(b);
       S.brains.delete(id);
+      swinging.delete(id);
     }
   }
 }
@@ -323,7 +331,7 @@ function start() {
       whTick();
     } catch {}
   }, 10);
-  world.afterEvents.entityDie.subscribe(onDeath, { entityTypes: ["minecraft:villager_v2", "minecraft:iron_golem"] });
+  world.afterEvents.entityDie.subscribe(onDeath, { entityTypes: ["minecraft:villager_v2", "minecraft:iron_golem", "minecraft:pillager", "minecraft:vindicator"] });
   world.afterEvents.playerInteractWithBlock.subscribe(onInteractBlock);
   world.afterEvents.itemUse.subscribe(onItemUse);
   system.afterEvents.scriptEventReceive.subscribe(onScriptEvent, { namespaces: ["civ"] });

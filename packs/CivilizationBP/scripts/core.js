@@ -129,13 +129,17 @@ const replacer = (k, v) => (k.startsWith("_") ? undefined : v);
 
 export function saveAll(force = false) {
   const ids = force ? [...S.civs.keys()] : [...S.dirty];
+  S.dirty.clear();
   for (const id of ids) {
     const civ = S.civs.get(id);
     try {
       world.setDynamicProperty("civ:" + id, civ ? JSON.stringify(civ, replacer) : undefined);
-    } catch {}
+    } catch (e) {
+      // Не сохранилось (например, запись слишком большая) — попробуем снова и сообщим в лог.
+      S.dirty.add(id);
+      console.warn(`[Цивилизации] не удалось сохранить ${civ?.name ?? id}: ${e}`);
+    }
   }
-  S.dirty.clear();
   try {
     world.setDynamicProperty("civ:index", JSON.stringify([...S.civs.keys()]));
     world.setDynamicProperty("civ:clock", S.clock);
@@ -143,7 +147,7 @@ export function saveAll(force = false) {
     world.setDynamicProperty("civ:night", S.nightWork ? "work" : "rest");
     world.setDynamicProperty("civ:radius", S.activeChunks);
     // Очередь сноса: старые куски стен и захваченные постройки (разбирают, когда чанк загрузится).
-    world.setDynamicProperty("civ:demo", JSON.stringify({ w: (S.wallDemo ?? []).slice(-1000), b: S.demo ?? [] }));
+    world.setDynamicProperty("civ:demo", JSON.stringify({ w: (S.wallDemo ?? []).slice(-800), b: (S.demo ?? []).slice(0, 60) }));
   } catch {}
 }
 
@@ -171,6 +175,8 @@ export function loadAll() {
 }
 
 export function deleteCiv(civ) {
+  // Войны в журнале закрываем (иначе висели бы «идёт N мин» вечно).
+  for (const w of S.journal?.wars ?? []) if (!w.end && (w.a === civ.id || w.b === civ.id)) w.end = Date.now();
   S.civs.delete(civ.id);
   S.dirty.add(civ.id);
   S.search.delete(civ.id);

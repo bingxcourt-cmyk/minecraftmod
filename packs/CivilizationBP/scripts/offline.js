@@ -8,7 +8,7 @@ import { progressRoads, planRoads } from "./links.js";
 import { marketTick, taxTick } from "./market.js";
 import { popOf } from "./society.js";
 import { ERAS } from "./society.js";
-import { upkeepTick, repayDebt } from "./upkeep.js";
+import { upkeepTick, repayDebt, periodOf } from "./upkeep.js";
 
 // Время телефона: пока вас нет в игре, жизнь продолжается.
 // При заходе считаем, сколько реального времени прошло, и прогоняем фоновую симуляцию за этот срок.
@@ -38,6 +38,9 @@ export function catchUp(onDone) {
   for (const c of S.civs.values()) c._active = false;
   S.catchingUp = true;
   const steps = Math.floor(seconds / STEP);
+  // Содержание зданий: за время дольше 48 часов не начисляют — начинаем с начала пересчитываемого окна.
+  const startP = periodOf(now - seconds * 1000);
+  for (const c of S.civs.values()) if (c.upkeep && c.upkeep.period !== undefined && c.upkeep.period < startP) c.upkeep.period = startP;
   function* job() {
     for (let s = 0; s < steps; s++) {
       S.clock += STEP;

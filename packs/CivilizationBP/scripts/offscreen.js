@@ -1,5 +1,5 @@
 import { S, DIM, loaded, playersNear, markDirty, personName, P, setProp } from "./core.js";
-import { TIERS, TOOL_FOR, toolTier, bestCraftable } from "./tools.js";
+import { TIERS, TOOL_FOR, toolTier, bestCraftable, giveTool } from "./tools.js";
 import { TYPES, getBP } from "./blueprints.js";
 import { MAX_POP, popOf, housingOf, chooseNext, count, has, join, eraTick, noteBuilt, newCiv, MAX_CIVS, MAX_COLONIES, deficitOf, deficitRoles } from "./society.js";
 import { findDrySpot } from "./blocks.js";
@@ -219,6 +219,13 @@ export function offscreenTick(civ, dt) {
   const builders = Math.max(R.builder ?? 0, pop >= 3 ? 1 : 0);
   off.build = Math.min(3000, off.build + builders * RATE.build * RATE.eff * k);
   civ.offQueue = civ.offQueue ?? [];
+  // Оплаченная постройка, которую начали ставить при игроке, — вдали возвращается в очередь
+  // (иначе фоновая стройка остановилась бы).
+  if (civ.project?.paid) {
+    const q = civ.project;
+    civ.offQueue.unshift({ t: q.t, x: q.x, y: q.y, z: q.z, r: q.r });
+    civ.project = null;
+  }
   const p = civ.project;
   if (p && !p.paid) {
     const ops = remainingCost(civ);
@@ -347,6 +354,13 @@ export function materialize(civ) {
         e.remove();
       } catch {}
     }
+  }
+  // Инструменты, сделанные в фоне (за них уже заплатили), — раздаём настоящим жителям.
+  const T = civ.census?.tiers ?? {};
+  for (const e of S.members.get(civ.id) ?? []) {
+    const role = brainOf(e, civ.id).role;
+    const kind = TOOL_FOR[role];
+    if (kind && T[role]) giveTool(e, kind, T[role]);
   }
   const g = off.got;
   const parts = [];

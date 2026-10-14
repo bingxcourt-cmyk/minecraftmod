@@ -29,6 +29,14 @@ export function toolsOf(ent) {
 
 export const toolTier = (ent, kind) => toolsOf(ent)[kind]?.t ?? 0;
 
+/** Выдать жителю инструмент уровня t (например, сделанный в фоновой симуляции). */
+export function giveTool(ent, kind, t) {
+  if (!t || toolTier(ent, kind) >= t) return;
+  const tools = toolsOf(ent);
+  tools[kind] = { t, d: TIERS[t].dur };
+  setProp(ent, KEY, JSON.stringify(tools));
+}
+
 export function toolLabel(ent, role) {
   const kind = TOOL_FOR[role];
   if (!kind) return "";

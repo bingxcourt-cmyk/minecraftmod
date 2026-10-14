@@ -37,11 +37,13 @@ export function lightsTick(civ) {
   craftTorches(civ);
   const dim = DIM();
   let placed = 0;
+  const before = civ.lights.length;
   for (let i = 0; i < civ.lights.length && placed < 3; i++) {
     const l = civ.lights[i];
     if (!loaded(dim, l)) continue;
     const cost = LIGHT_COST[l.id] ?? { torches: 1 };
-    if (!canPay(civ, cost)) break;
+    // Нечем зажечь этот (например, фонарь без железа) — пропускаем, а факелы дальше ставим.
+    if (!canPay(civ, cost)) continue;
     const b = getB(dim, l.x, l.y, l.z);
     if (!b) continue;
     civ.lights.splice(i--, 1);
@@ -56,5 +58,6 @@ export function lightsTick(civ) {
     sound(dim, "fire.ignite", l, 0.4);
     placed++;
   }
-  markDirty(civ);
+  // Сохраняем, только если что-то поменялось (иначе поселение перезаписывалось бы каждую секунду).
+  if (civ.lights.length !== before) markDirty(civ);
 }

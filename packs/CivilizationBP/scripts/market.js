@@ -164,6 +164,10 @@ function planCoins(civ, need, spare, deals) {
 
 /** Купить у самых дешёвых продавцов. */
 function buy(civ, k, qty) {
+  if (!(qty > 0)) return { qty: 0, cost: 0, from: "" };
+  // Еду не покупают сверх того, что влезет в амбары (иначе заплатили бы за выброшенное).
+  if (k === "food") qty = Math.min(qty, Math.max(0, foodCap(civ) - (civ.res.food ?? 0)));
+  if (!(qty > 0)) return { qty: 0, cost: 0, from: "" };
   let got = 0;
   let cost = 0;
   const from = [];
@@ -172,7 +176,7 @@ function buy(civ, k, qty) {
     // Цена и суммы — с точностью до 0.000001 монеты; покупатель платит ровно столько, сколько получает продавец.
     let q = Math.min(qty - got, l.qty, Math.floor(money(civ.coins ?? 0) / l.price + 1e-9));
     while (q > 0 && money(q * l.price) > money(civ.coins ?? 0)) q--;
-    if (q <= 0) break;
+    if (!(q > 0)) break;
     const seller = l.civ ? S.civs.get(l.civ) : undefined;
     const c = transfer(civ, seller, q * l.price); // лот «старого торгового дома» — монеты уходят из оборота
     l.qty -= q;
@@ -199,7 +203,7 @@ function needsOf(civ) {
   const map = { дерево: "wood", камень: "stone", железо: "iron", еда: "food", стекло: "glass", песок: "sand", земля: "dirt", андезит: "andesite" };
   // Стройка встала из-за ресурса.
   const w = map[civ.waiting];
-  if (w) need[w] = Math.max(1, rc[w] - (civ.res[w] ?? 0));
+  if (w) need[w] = Math.max(1, (rc[w] ?? 0) - (civ.res[w] ?? 0));
   // Для новой эпохи всё построено, не хватает только камня/железа.
   const next = ERAS[civ.era].next;
   if (next && !missingQueue(civ).length) {

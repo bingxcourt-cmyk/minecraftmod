@@ -19,7 +19,11 @@ export function loadLoans() {
 
 export function saveLoans() {
   try {
-    world.setDynamicProperty("civ:loans", JSON.stringify((S.loans ?? []).slice(-40)));
+    // Действующие кредиты сохраняются все, из закрытых — только последние 30.
+    const all = S.loans ?? [];
+    const active = all.filter((l) => live(l) || l.status === "defaulted");
+    const done = all.filter((l) => !(live(l) || l.status === "defaulted")).slice(-30);
+    world.setDynamicProperty("civ:loans", JSON.stringify([...done, ...active]));
   } catch {}
 }
 
@@ -76,6 +80,10 @@ export function creditTick(declareWar) {
     markDirty(b);
     note("credit", `${lender.name} дали в долг ${b.name} ${amount} мон. под ${Math.round(rate * 100)}% (вернуть ${loan.due}, репутация ${repOf(b)})`);
   }
+  // Рынок закрыт по кредиту, которого больше нет, — открываем.
+  for (const c of S.civs.values()) {
+    if (c.marketBan && !S.loans.some((l) => l.id === c.marketBan && live(l))) c.marketBan = null;
+  }
   // Выплаты.
   for (const loan of S.loans) {
     if (!live(loan)) continue;
@@ -83,6 +91,7 @@ export function creditTick(declareWar) {
     const l = S.civs.get(loan.lender);
     if (!b || !l) {
       loan.status = "closed";
+      if (b && b.marketBan === loan.id) b.marketBan = null; // кредитор исчез — рынок снова открыт
       continue;
     }
     if (b.war && b.war.enemy === l.id) continue; // воюют — не до выплат
@@ -172,8 +181,13 @@ export function splitDebtLoot(loser, winner) {
       a._reassign = true;
     }
   }
-  // Остаток от деления монет (чтобы деньги не пропадали при округлении) — кредитору.
+  // Остатки от деления монет и ресурсов (чтобы ничего не пропадало при округлении) — кредитору.
   winner.coins = (winner.coins ?? 0) + (take.coins - taken);
+  for (const k in take) {
+    if (k === "coins") continue;
+    const given = Math.floor(take[k] * (allies.length ? 0.5 : 1)) + allies.reduce((s) => s + Math.floor(take[k] * (0.5 / allies.length)), 0);
+    winner.res[k] = (winner.res[k] ?? 0) + (take[k] - given);
+  }
   loan.status = "collected";
   return `забрали ${take.coins} мон. и половину запасов: 50% — ${winner.name}${allies.length ? ", 50% — " + allies.map((a) => a.name).join(", ") : ""}`;
 }

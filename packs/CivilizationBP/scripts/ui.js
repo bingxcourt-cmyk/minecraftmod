@@ -9,7 +9,7 @@ import { whLine, whCommand, showWhForm } from "./wh.js";
 import { mineInfo } from "./mine.js";
 import { roadInfo, teleportTo } from "./links.js";
 import { marketText } from "./market.js";
-import { showJournal } from "./journal.js";
+import { showJournal , warEndAll } from "./journal.js";
 import { creditText, repOf, debtOf } from "./credit.js";
 import { wallInfo } from "./walls.js";
 import { upkeepInfo } from "./upkeep.js";
@@ -284,6 +284,7 @@ export function onScriptEvent(ev) {
     }
     case "civ:peace": {
       for (const civ of S.civs.values()) {
+        if (civ.war) warEndAll(civ, "мир по приказу свыше");
         civ.war = null;
         civ._reassign = true;
         for (const k in civ.tension) civ.tension[k] = 0;

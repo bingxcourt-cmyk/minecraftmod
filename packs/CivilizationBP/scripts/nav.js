@@ -133,6 +133,13 @@ export function findPath(from, to, reach = 1.5, maxNodes = 300) {
   let best = start;
   let bestH = h(sx, sz);
   let expanded = 0;
+  // Одни и те же клетки проверяются из соседних узлов много раз — запоминаем в пределах одного поиска.
+  const wy = new Map();
+  const walk = (x, z, y) => {
+    const k = `${x},${z},${y}`;
+    if (!wy.has(k)) wy.set(k, walkY(dim, x + 0.5, z + 0.5, y, false));
+    return wy.get(k);
+  };
   while (open.size && expanded < maxNodes) {
     const cur = open.pop();
     expanded++;
@@ -148,7 +155,7 @@ export function findPath(from, to, reach = 1.5, maxNodes = 300) {
     for (const [dx, dz] of DIRS) {
       const nx = cur.x + dx;
       const nz = cur.z + dz;
-      const ny = walkY(dim, nx + 0.5, nz + 0.5, cur.y, false);
+      const ny = walk(nx, nz, cur.y);
       if (ny === undefined) continue;
       // При подъёме нужен простор над головой.
       if (ny > cur.y && !canPass(getB(dim, cur.x, cur.y + 2, cur.z))) continue;

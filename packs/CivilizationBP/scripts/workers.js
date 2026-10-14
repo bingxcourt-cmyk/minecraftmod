@@ -263,7 +263,7 @@ function findTree(civ) {
         // Под стволом должна быть земля — значит это живое дерево, а не постройка.
         if (isNaturalGround(b.typeId)) {
           const key = `${x},${found},${z}`;
-          if (S.claimedTrees.has(key)) break;
+          if (S.claimedTrees.has(key) || (S.badTrees?.get(key) ?? 0) > S.clock) break;
           return { x, y: found, z, key, logId: getB(dim, x, found, z)?.typeId ?? "minecraft:oak_log" };
         }
         break;
@@ -409,6 +409,8 @@ function lumberjack(civ, ent, brain, tick) {
       }
       if (forester(civ, ent, brain, tick)) return;
       if (planter(civ, ent, brain, tick)) return;
+      // Поиск дерева дорогой — без леса рядом ищут не каждый раз, а раз в пару секунд.
+      brain.cd = tick + cdTicks(40, brain);
       return wander(civ, brain, 16);
     }
     civ._noTree = 0;
@@ -418,7 +420,15 @@ function lumberjack(civ, ent, brain, tick) {
   const tree = brain.tree;
   setTarget(brain, { x: tree.x + 0.5, y: tree.y, z: tree.z + 0.5 }, 2.3, true);
   if (!near(ent, brain.target, 2.6, true)) return;
-  if (!tree.logs) tree.logs = collectTree(civ, tree);
+  if (!tree.logs) {
+    tree.logs = collectTree(civ, tree);
+    tree.cut = 0;
+    // Бревно без листвы (поваленное дерево, чья-то постройка) — не дерево; запоминаем и больше не ходим.
+    if (!tree.logs.length) {
+      S.badTrees = S.badTrees ?? new Map();
+      S.badTrees.set(tree.key, S.clock + 600);
+    }
+  }
   const pos = tree.logs.shift();
   if (!pos) {
     // Сажает новое дерево на месте срубленного.
@@ -434,8 +444,8 @@ function lumberjack(civ, ent, brain, tick) {
     }
     S.claimedTrees.delete(tree.key);
     brain.tree = null;
-    // С дерева падают саженцы — лишние продадут на рынке.
-    if (Math.random() < 0.6 && (civ.res.saplings ?? 0) < 64) civ.res.saplings = (civ.res.saplings ?? 0) + 1;
+    // С дерева падают саженцы — лишние продадут на рынке (только если дерево действительно срубили).
+    if (tree.cut > 0 && Math.random() < 0.6 && (civ.res.saplings ?? 0) < 64) civ.res.saplings = (civ.res.saplings ?? 0) + 1;
     brain.cd = tick + cdTicks(20, brain);
     return;
   }
@@ -448,6 +458,7 @@ function lumberjack(civ, ent, brain, tick) {
     try {
       b.setType("minecraft:air");
       civ.res.wood += 3;
+      tree.cut = (tree.cut ?? 0) + 1;
       if (Math.random() < 0.08) addFood(civ, 1); // нашли яблоко
       markDirty(civ);
       sound(dim, "dig.wood", pos);
