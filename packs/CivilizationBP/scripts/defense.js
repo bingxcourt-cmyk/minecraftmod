@@ -7,6 +7,7 @@ import { S, getProp, setProp, markDirty } from "./core.js";
 import { remainingCost, brainOf } from "./workers.js";
 import { ERAS } from "./society.js";
 import { note } from "./journal.js";
+import { hasBoilingOil } from "./siege.js";
 
 // Враги, от которых защищаются. Криперов не трогают — взорвутся посреди деревни.
 const IGNORE = new Set([
@@ -63,7 +64,11 @@ export function guardThink(civ, ent, brain, tick) {
       }
       if (Math.sqrt(bd) <= 30) {
         try {
-          best.applyDamage(4 + Math.floor(civ.era / 2), { cause: EntityDamageCause.projectile, damagingEntity: ent });
+          // Кипяток: у кого есть кузница, обливают тех, кто ломает стену, — урон больше.
+          const atWall = Math.hypot(best.location.x - top.x, best.location.z - top.z) <= 4;
+          const oil = atWall && hasBoilingOil(civ) ? 3 : 0;
+          best.applyDamage(4 + Math.floor(civ.era / 2) + oil, { cause: EntityDamageCause.projectile, damagingEntity: ent });
+          if (oil) particle(DIM(), "minecraft:basic_smoke_particle", { x: best.location.x, y: best.location.y + 2, z: best.location.z });
           ent.teleport(ent.location, { facingLocation: { x: best.location.x, y: best.location.y + 1, z: best.location.z } });
         } catch {}
         const dim = DIM();
@@ -96,7 +101,7 @@ export function guardThink(civ, ent, brain, tick) {
 // Железная (24 железа) и алмазная (24 алмаза) броня для воинов и стражников — только из излишков:
 // сначала стройка, эпоха и инструменты. Броня даёт сопротивление урону: железо −20%, алмаз −40%.
 const ARMOR_ROLES = new Set(["soldier", "guard"]);
-export const ARMOR_NAME = ["", "жел. броня", "алм. броня"];
+export const ARMOR_NAME = ["", "жел. броня", "алм. броня", "кож. броня"];
 
 export function armorOf(ent) {
   return Number(getProp(ent, "civ:armor") ?? 0);
@@ -111,11 +116,16 @@ export function armorTick(civ) {
   const ironKeep = Math.max(rc.iron, next?.iron ?? 0) + 20;
   for (const e of fighters) {
     let a = armorOf(e);
-    if (a < 2 && (civ.res.diamond ?? 0) >= 24 + 6) {
+    // Кожаная броня (из загона) — самая простая: пока нет железа.
+    if (a === 0 && (civ.res.leather ?? 0) >= 10) {
+      civ.res.leather -= 10;
+      a = 3;
+    }
+    if ((a < 2 || a === 3) && (civ.res.diamond ?? 0) >= 24 + 6) {
       civ.res.diamond -= 24;
       a = 2;
       note("events", `${civ.name}: выкована алмазная броня`);
-    } else if (a < 1 && (civ.res.iron ?? 0) - 24 >= ironKeep) {
+    } else if ((a < 1 || a === 3) && (civ.res.iron ?? 0) - 24 >= ironKeep) {
       civ.res.iron -= 24;
       a = 1;
     }
@@ -126,7 +136,8 @@ export function armorTick(civ) {
     }
     if (a > 0) {
       try {
-        e.addEffect("resistance", 240, { amplifier: a - 1, showParticles: false });
+        if (a === 3) e.addEffect("absorption", 240, { amplifier: 0, showParticles: false });
+        else e.addEffect("resistance", 240, { amplifier: a - 1, showParticles: false });
       } catch {}
     }
   }

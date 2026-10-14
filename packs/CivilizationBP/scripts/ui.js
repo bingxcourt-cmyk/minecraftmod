@@ -13,6 +13,11 @@ import { showJournal , warEndAll } from "./journal.js";
 import { creditText, repOf, debtOf } from "./credit.js";
 import { wallInfo } from "./walls.js";
 import { upkeepInfo } from "./upkeep.js";
+import { titleOf, TRAITS, moodText } from "./life.js";
+import { scienceText } from "./progress.js";
+import { pactText } from "./pacts.js";
+import { caravanText } from "./caravans.js";
+import { questText, deliverQuest, showRuleForm, mapText } from "./quests.js";
 import { TOOL_FOR, TIERS, toolTier } from "./tools.js";
 
 export function nearestCiv(p, maxDist) {
@@ -138,11 +143,17 @@ export function showCivForm(pl, civ) {
   const parent = civ.parent ? S.civs.get(civ.parent) : undefined;
   const body = [
     `§lЭпоха:§r ${ERAS[civ.era].name}`,
+    civ.ruler ? `§lПравитель:§r ${titleOf(civ)} ${civ.ruler.name} (${TRAITS[civ.ruler.trait].name} — ${TRAITS[civ.ruler.trait].hint})${civ.playerRuler ? ` §e· правит игрок ${civ.playerRuler}§r` : ""}` : "",
+    `§lНастроение:§r ${moodText(civ)}${(civ.festUntil ?? 0) > S.clock ? " §d— праздник!§r" : ""}${(civ._epidemic ?? 0) > S.clock ? " §c— эпидемия!§r" : ""}`,
+    `§lНаука:§r ${scienceText(civ)}`,
+    `§lДоговоры:§r ${pactText(civ)}`,
+    `§lКараваны:§r ${caravanText(civ)}`,
+    `§lЗадание для вас:§r ${questText(civ)}`,
     `§lЖители:§r ${popOf(civ)} (мест в домах: ${housingOf(civ)})`,
     `§lПрофессии:§r ${roleSummary(civ) || "—"}`,
     `§lПостроек:§r ${civ.buildings.filter((b) => b.t !== "quarry").length}`,
     `§lРесурсы:§r дерево ${r.wood}, камень ${r.stone}, еда ${r.food}/${foodCap(civ)}, железо ${r.iron}, алмазы ${r.diamond ?? 0}, саженцы ${r.saplings ?? 0}`,
-    `§lСклад:§r земля ${r.dirt ?? 0}, андезит ${r.andesite ?? 0}, уголь ${r.coal ?? 0}, факелы ${r.torches ?? 0}${r.sand || r.glass ? `, песок ${r.sand ?? 0}, стекло ${r.glass ?? 0}` : ""}${civ.lights?.length ? ` §e(ждут света: ${civ.lights.length} мест)` : ""}`,
+    `§lСклад:§r шерсть ${r.wool ?? 0}, кожа ${r.leather ?? 0}, земля ${r.dirt ?? 0}, андезит ${r.andesite ?? 0}, уголь ${r.coal ?? 0}, факелы ${r.torches ?? 0}${r.sand || r.glass ? `, песок ${r.sand ?? 0}, стекло ${r.glass ?? 0}` : ""}${civ.lights?.length ? ` §e(ждут света: ${civ.lights.length} мест)` : ""}`,
     `§lРепутация:§r ${repOf(civ)}${debtOf(civ) ? `, §cдолг ${debtOf(civ).ln}: ${debtOf(civ).paid}/${debtOf(civ).due}§r` : ""}${civ.marketBan ? " §c(рынок закрыт)" : ""}`,
     `§lСтена:§r ${wallInfo(civ)}`,
     `§lСодержание зданий:§r ${upkeepInfo(civ)}`,
@@ -164,14 +175,18 @@ export function showCivForm(pl, civ) {
     .title(`${civ.color}${civ.name}`)
     .body(body.join("\n"))
     .button("Подарить ресурсы из инвентаря")
+    .button(civ.quest ? "Сдать задание" : "Заданий нет")
+    .button(civ.playerRuler === pl.name ? "Правление (вы правитель)" : "Стать правителем")
     .button("ВХ на профессии")
     .button("Телепорт к поселению")
     .button("Закрыть")
     .show(pl)
     .then((res) => {
       if (res.selection === 0) donate(pl, civ);
-      if (res.selection === 1) showWhForm(pl);
-      if (res.selection === 2) showTpForm(pl);
+      if (res.selection === 1) pl.sendMessage(`§a[${civ.name}] ${deliverQuest(pl, civ)}`);
+      if (res.selection === 2) showRuleForm(pl, civ);
+      if (res.selection === 3) showWhForm(pl);
+      if (res.selection === 4) showTpForm(pl);
     })
     .catch(() => {});
 }
@@ -208,6 +223,7 @@ export function onItemUse(ev) {
   new ActionFormData()
     .title("Цивилизации")
     .button("Журнал: войны, павшие, кредиты, рынок…")
+    .button("Карта мира")
     .button("Телепорт к поселению")
     .button("Рынок: цены и казна")
     .button("Кредиты: долги и репутация")
@@ -216,10 +232,11 @@ export function onItemUse(ev) {
     .show(pl)
     .then((res) => {
       if (res.selection === 0) showJournal(pl);
-      if (res.selection === 1) showTpForm(pl);
-      if (res.selection === 2) showMarketForm(pl);
-      if (res.selection === 3) showCreditForm(pl);
-      if (res.selection === 4) showWhForm(pl);
+      if (res.selection === 1) new ActionFormData().title("Карта мира").body(mapText(pl)).button("Закрыть").show(pl).catch(() => {});
+      if (res.selection === 2) showTpForm(pl);
+      if (res.selection === 3) showMarketForm(pl);
+      if (res.selection === 4) showCreditForm(pl);
+      if (res.selection === 5) showWhForm(pl);
     })
     .catch(() => {});
 }

@@ -4,6 +4,7 @@ import { groundAt, isPassableId, isNatural } from "./blocks.js";
 import { remainingCost, digYield } from "./workers.js";
 import { deferLight } from "./lights.js";
 import { note, warLog } from "./journal.js";
+import { breakTime } from "./siege.js";
 
 // Защитная стена с эпохи «Город»: 6 блоков каменного кирпича, зубцы-бойницы через блок,
 // факелы на зубцах, ворота-калитки на дорогах и по четырём сторонам света.
@@ -124,6 +125,11 @@ function geo(civ) {
   const cols = [];
   for (let i = 0; i < w.c.length; i += 4) cols.push({ x: w.ox + parseInt(w.c.slice(i, i + 2), 36), z: w.oz + parseInt(w.c.slice(i + 2, i + 4), 36) });
   const idx = new Map(cols.map((c, i) => [`${c.x},${c.z}`, i]));
+  // Пустая стена (все столбы ушли при перестройке) — считать нечего.
+  if (!cols.length) {
+    civ._wg = { c: w.c, rg: w.rg ?? "", cols, idx, gates: new Set(), side: {}, x0: 0, z0: 0, W: 0, D: 0, grid: new Uint8Array(0) };
+    return civ._wg;
+  }
   // Ворота по четырём сторонам света — самый дальний столб на луче от центра.
   const gates = new Set();
   const cx = Math.floor(civ.center.x);
@@ -471,7 +477,7 @@ export function progressWalls(dt) {
     migrate(civ);
     const w = civ.wall;
     if (!w?.s) continue;
-    w.pay = (w.pay ?? 0) + WALL_SPEED * S.speed * dt;
+    w.pay = (w.pay ?? 0) + WALL_SPEED * S.speed * dt * (civ.techs?.includes("masonry") ? 2 : 1);
     if (w.pay < 1) continue;
     const chars = w.s.split("");
     let changed = false;
@@ -611,7 +617,7 @@ export function tryBreakWall(brain) {
     sound(dim, "dig.stone", { x: c.x, y: ent.location.y + 1, z: c.z });
     particle(dim, "minecraft:basic_smoke_particle", { x: c.x + 0.5, y: ent.location.y + 1.5, z: c.z + 0.5 });
   }
-  if (S.clock - brain.breakStart < 60) return true;
+  if (S.clock - brain.breakStart < breakTime(brain.role === "raider" ? null : own, civ)) return true;
   brain.breakStart = null;
   const w = civ.wall;
   const g = geo(civ);

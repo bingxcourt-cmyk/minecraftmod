@@ -8,6 +8,7 @@ import { splitDebtLoot, cancelDebt, debtOf } from "./credit.js";
 import { has, popOf, count } from "./society.js";
 import { note, warStart, warEnd } from "./journal.js";
 import { takeLand } from "./territory.js";
+import { hasPact, callDefenders } from "./pacts.js";
 
 const WAR_DIST = 170;
 
@@ -41,9 +42,11 @@ export function declareWar(a, b, opts = {}) {
   title([a, b], "§cВОЙНА!", `${a.color}${a.name} §7против ${b.color}${b.name}`);
   sound(DIM(), "raid.horn", a.center, 1);
   sound(DIM(), "raid.horn", b.center, 1);
+  // Союзники жертвы по оборонительному договору вступают в войну (кроме войны за долг).
+  if (opts.reason !== "долг") callDefenders(a, b);
 }
 
-function makePeace(a, b, msg) {
+export function makePeace(a, b, msg) {
   warEnd(a, b, msg);
   for (const c of [a, b]) {
     // Союзники в войне за долг тоже расходятся.
@@ -98,6 +101,8 @@ function surrender(loser, winner) {
  * (нет товара или рынок закрыт), а у соседа этого много; голод; пустая казна у бедных при богатом соседе.
  */
 function motive(a, b) {
+  // Договор (любой) — значит, не нападают.
+  if (hasPact(a, b, "peace")) return null;
   // Некуда расти: сосед занял землю, на которой можно было бы строиться.
   if (a.crowdBy === b.id && (a.crowdUntil ?? 0) > S.clock) return { reason: "территория — за землю", res: "land" };
   if (a.starving && (b.res.food ?? 0) > popOf(b) * 4 + 20) return { reason: "голод — за еду", res: "food" };
@@ -123,7 +128,8 @@ export function diplomacyTick() {
     const ma = motive(a, b);
     const mb = motive(b, a);
     let t = a.tension[b.id] ?? 0;
-    if (ma || mb) t += 6 + rnd(0, 4) + (dist < 100 ? 2 : 0);
+    // Воинственный правитель заводится быстрее.
+    if (ma || mb) t += (6 + rnd(0, 4) + (dist < 100 ? 2 : 0)) * (a.ruler?.trait === "warrior" || b.ruler?.trait === "warrior" ? 1.5 : 1);
     else t = Math.max(0, t - 2);
     a.tension[b.id] = t;
     b.tension[a.id] = t;
@@ -177,7 +183,7 @@ function damageOf(civ, brain, ent) {
   if (brain.role === "golem") return 10;
   const use = useTool(ent, "sword");
   if (use.broke) updateTag(ent, brain, civ);
-  return TIERS[use.tier].dmg + Math.floor(civ.era / 2) + (has(civ, "barracks") ? 1 : 0);
+  return TIERS[use.tier].dmg + Math.floor(civ.era / 2) + (has(civ, "barracks") ? 1 : 0) + (civ.ruler?.trait === "warrior" ? 1 : 0);
 }
 
 export function soldierThink(civ, ent, brain, tick) {

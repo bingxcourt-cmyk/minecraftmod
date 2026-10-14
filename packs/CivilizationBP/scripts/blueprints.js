@@ -22,6 +22,7 @@ const COST = {
   stripped_oak_log: { wood: 2 }, stripped_spruce_log: { wood: 2 }, chiseled_stone_bricks: { stone: 1 },
   cracked_stone_bricks: { stone: 1 }, polished_andesite: { andesite: 1 }, flower_pot: {},
   oak_leaves: {}, grindstone: { stone: 2, wood: 1 }, cauldron: { iron: 3 }, carved_pumpkin: { food: 1 }, gravel: {},
+  brewing_stand: { stone: 1, iron: 1 }, enchanting_table: { stone: 4, iron: 2 }, glowstone: { coal: 2 }, fence_gate: { wood: 2 }, spruce_fence: { wood: 1 },
 };
 
 class BP {
@@ -527,6 +528,115 @@ function castle() {
   return b.build();
 }
 
+// Знахарская 7×7: травы в горшках, котёл с отваром, варочная стойка. Меньше болезней.
+function herbalist() {
+  const b = new BP(7, 7);
+  b.ring(0, 0, 6, 6, 0, "cobblestone");
+  b.box(1, 0, 1, 5, 0, 5, "spruce_planks");
+  b.walls(0, 0, 6, 6, 1, 3, "spruce_planks");
+  b.frame(0, 0, 6, 6, 1, 3, "stripped_oak_log");
+  b.realDoor(3, 0);
+  windows(b, [[0, 3], [6, 3], [2, 6], [4, 6]], [2]);
+  b.gable(0, 0, 6, 6, 4, "dark_oak_stairs", "spruce_planks", "dark_oak_slab");
+  b.set(1, 1, 5, "cauldron");
+  b.set(3, 1, 5, "brewing_stand");
+  b.set(5, 1, 5, "barrel");
+  b.bed(5, 1, 2, 2);
+  for (const [x, z] of [[1, 1], [1, 2], [1, 3]]) b.set(x, 1, z, "flower_pot");
+  b.set(2, 1, 5, "torch");
+  return b.build();
+}
+
+// Загон 11×11: ограда с калиткой, кормушки, сарай-навес. Даёт еду, шерсть и кожу.
+function pen() {
+  const b = new BP(11, 11);
+  b.box(0, 0, 0, 10, 0, 10, "grass_path");
+  b.box(1, 0, 1, 9, 0, 9, "grass_block");
+  b.ring(0, 0, 10, 10, 1, "oak_fence");
+  b.del(5, 1, 0);
+  b.set(5, 1, 0, "fence_gate");
+  for (const [x, z] of [[0, 0], [10, 0], [0, 10], [10, 10]]) {
+    b.set(x, 2, z, "oak_fence");
+    b.set(x, 3, z, "torch");
+  }
+  // Навес с сеном в дальнем углу.
+  for (const [x, z] of [[7, 7], [9, 7]]) for (let y = 1; y <= 3; y++) b.set(x, y, z, "spruce_log");
+  b.box(7, 4, 7, 9, 4, 9, "spruce_slab");
+  b.box(8, 1, 8, 9, 1, 9, "hay_block");
+  b.set(2, 1, 8, "composter");
+  b.set(2, 1, 2, "cauldron");
+  return b.build();
+}
+
+// Библиотека 9×9: два этажа полок, кафедры, люстра-фонари. Даёт очки науки.
+function library() {
+  const b = new BP(9, 9);
+  b.box(0, 0, 0, 8, 0, 8, "stone_bricks");
+  b.box(1, 0, 1, 7, 0, 7, "dark_oak_planks");
+  b.walls(0, 0, 8, 8, 1, 6, "stone_bricks");
+  b.ring(0, 0, 8, 8, 1, "chiseled_stone_bricks");
+  b.frame(0, 0, 8, 8, 1, 6, "dark_oak_log");
+  b.realDoor(4, 0);
+  windows(b, [[0, 2], [0, 4], [0, 6], [8, 2], [8, 4], [8, 6], [2, 8], [6, 8]], [2, 3, 4, 5]);
+  b.gable(0, 0, 8, 8, 7, "dark_oak_stairs", "dark_oak_planks", "dark_oak_slab");
+  for (const z of [2, 3, 4, 5, 6]) for (let y = 1; y <= 3; y++) {
+    b.set(1, y, z, "bookshelf");
+    b.set(7, y, z, "bookshelf");
+  }
+  b.box(2, 1, 7, 6, 3, 7, "bookshelf");
+  b.set(3, 1, 4, "lectern");
+  b.set(5, 1, 4, "lectern");
+  b.set(4, 1, 5, "enchanting_table");
+  for (const [x, z] of [[3, 2], [5, 2], [4, 6]]) b.set(x, 1, z, "lantern");
+  return b.build();
+}
+
+// Пристань 5×11: настил на сваях в воду, швартовые столбы. Открывает морскую торговлю.
+function pier() {
+  const b = new BP(5, 11);
+  b.box(0, 0, 0, 4, 0, 10, "spruce_planks");
+  for (const z of [0, 5, 10]) for (const x of [0, 4]) {
+    b.set(x, 1, z, "spruce_fence");
+    b.set(x, 2, z, "spruce_fence");
+  }
+  for (let z = 1; z <= 9; z++) if (z !== 5) {
+    b.set(0, 1, z, "spruce_fence");
+    b.set(4, 1, z, "spruce_fence");
+  }
+  b.set(2, 1, 10, "barrel");
+  b.set(1, 1, 9, "chest");
+  for (const [x, z] of [[0, 0], [4, 0], [0, 10], [4, 10]]) b.set(x, 3, z, "torch");
+  return b.build();
+}
+
+// Чудо света — Маяк 9×9 высотой 26: каменная башня с галереей и огнём наверху.
+function wonder() {
+  const b = new BP(9, 9);
+  b.box(0, 0, 0, 8, 0, 8, "chiseled_stone_bricks");
+  b.box(1, 1, 1, 7, 1, 7, "stone_bricks");
+  for (let y = 2; y <= 20; y++) {
+    const r = y < 8 ? 3 : 2;
+    b.ring(4 - r, 4 - r, 4 + r, 4 + r, y, y % 4 === 0 ? "polished_andesite" : "stone_bricks");
+  }
+  b.realDoor(4, 1);
+  for (let y = 4; y <= 18; y += 3) {
+    b.set(4, y, 2, "glass_pane");
+    b.set(4, y, 6, "glass_pane");
+    b.set(2, y, 4, "glass_pane");
+    b.set(6, y, 4, "glass_pane");
+  }
+  for (let y = 2; y <= 20; y++) b.set(4, y, 5, "ladder", { facing_direction: 2 });
+  b.box(1, 21, 1, 7, 21, 7, "stone_bricks");
+  b.ring(1, 1, 7, 7, 22, "iron_bars");
+  for (const [x, z] of [[3, 3], [5, 3], [3, 5], [5, 5]]) for (let y = 22; y <= 24; y++) b.set(x, y, z, "stone_bricks");
+  b.box(3, 23, 3, 5, 23, 5, "glass_pane");
+  b.set(4, 22, 4, "glowstone");
+  b.set(4, 23, 4, "glowstone");
+  b.box(2, 25, 2, 6, 25, 6, "stone_brick_slab");
+  b.set(4, 25, 4, "chiseled_stone_bricks");
+  return b.build();
+}
+
 // Стекольный завод: печи плавят песок в стекло (8 стекла на 1 уголь).
 function glassworks() {
   const b = new BP(9, 7);
@@ -593,6 +703,11 @@ export const TYPES = {
   barracks: { name: "Казармы", gen: barracks },
   castle: { name: "Замок", gen: castle },
   glassworks: { name: "Стекольный завод", gen: glassworks },
+  herbalist: { name: "Знахарская", gen: herbalist },
+  pen: { name: "Загон", gen: pen },
+  library: { name: "Библиотека", gen: library },
+  pier: { name: "Пристань", gen: pier },
+  wonder: { name: "Чудо света — Маяк", gen: wonder },
   skyscraper: { name: "Небоскрёб", gen: skyscraper },
   quarry: { name: "Карьер", gen: () => new BP(5, 5).build() },
   mine: { name: "Шахта", gen: () => new BP(3, 3).build() },

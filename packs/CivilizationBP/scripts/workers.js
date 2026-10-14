@@ -12,6 +12,7 @@ import { ERAS } from "./society.js";
 import { TOOL_FOR, TIERS, toolLabel, craftNeed, craft, useTool } from "./tools.js";
 import { note } from "./journal.js";
 import { sanderThink, diggerThink, quarryThink } from "./industry.js";
+import { techMult } from "./progress.js";
 
 export const ROLE_NAME = {
   lumberjack: "Лесоруб", miner: "Шахтёр", farmer: "Фермер", hunter: "Охотник", builder: "Строитель",
@@ -468,7 +469,7 @@ function lumberjack(civ, ent, brain, tick) {
   try {
     ent.teleport(ent.location, { facingLocation: { x: pos.x + 0.5, y: pos.y + 0.5, z: pos.z + 0.5 } });
   } catch {}
-  brain.cd = tick + cdTicks(14 * mult, brain);
+  brain.cd = tick + cdTicks((14 * mult) / techMult(civ, "axes"), brain);
 }
 
 // ---------- Фермер ----------
@@ -519,7 +520,7 @@ function farmer(civ, ent, brain, tick) {
       b.setPermutation(BlockPermutation.resolve("minecraft:wheat", { growth: 0 }));
     }
   } catch {}
-  brain.cd = tick + cdTicks(24 * use.mult, brain);
+  brain.cd = tick + cdTicks((24 * use.mult) / techMult(civ, "plough"), brain);
 }
 
 // ---------- Охотник ----------
@@ -748,8 +749,8 @@ export function fastBuild(civ, maxOps) {
       if (op.k === "c") {
         if (!b.isAir && !isProtected(b.typeId) && !(op.ramp && !rampOk(civ, op, b.typeId))) b.setType("minecraft:air");
       } else if (op.k === "f") {
-        // Оплачено в фоне (земля списана по оценке) — подсыпают сразу.
-        if ((b.isAir || b.isLiquid || isPassableId(b.typeId)) && !(op.ramp && !rampOk(civ, op, b.typeId))) b.setType("minecraft:dirt");
+        // Оплачено в фоне (земля списана по оценке) — подсыпают сразу; воду — одним слоем под полом.
+        if (!(b.isLiquid && op.y < p.y - 1) && (b.isAir || b.isLiquid || isPassableId(b.typeId)) && !(op.ramp && !rampOk(civ, op, b.typeId))) b.setType("minecraft:dirt");
       } else if (isLight(op.id)) {
         if (b.typeId !== op.id) deferLight(civ, op.x, op.y, op.z, op.id);
       } else if (!(b.typeId === op.id && !op.pair)) placeOp(dim, op);
@@ -793,6 +794,11 @@ export function buildStep(civ) {
       continue;
     }
     if (op.k === "f") {
+      // Воду засыпают только одним слоем под полом — дальше вниз насыпь не нужна.
+      if (b.isLiquid && op.y < p.y - 1) {
+        p.step++;
+        continue;
+      }
       if ((b.isAir || b.isLiquid || isPassableId(id)) && !(op.ramp && !rampOk(civ, op, id))) {
         // Выравнивание: сначала землёй; если земли долго нет (стройка стоит 30 с) — камнем.
         const mat = fillMaterial(civ);
@@ -854,7 +860,8 @@ function builder(civ, ent, brain, tick, onComplete) {
     ent.teleport(ent.location, { facingLocation: { x: op.x + 0.5, y: op.y + 0.5, z: op.z + 0.5 } });
   } catch {}
   if (buildStep(civ)) onComplete(civ);
-  brain.cd = tick + cdTicks(civ.waiting ? 40 : 10, brain);
+  // Правитель-строитель: стройка на 30% быстрее.
+  brain.cd = tick + cdTicks((civ.waiting ? 40 : 10) / (civ.ruler?.trait === "builder" ? 1.3 : 1), brain);
 }
 
 // ---------- Диспетчер ----------

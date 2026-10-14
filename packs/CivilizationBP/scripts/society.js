@@ -13,16 +13,18 @@ import { isOwnWall, clearWallFor, replanWall } from "./walls.js";
 import { glassShort, dirtShort } from "./industry.js";
 import { virtualColony } from "./offscreen.js";
 import { buildCost } from "./upkeep.js";
+import { stockPen } from "./progress.js";
 
 export const ERAS = [
   { name: "Племя", queue: ["center", "farm_small", "hut", "hut", "well"], next: { pop: 4, stone: 10 } },
-  { name: "Деревня", queue: ["house", "smithy", "farm", "house", "barn", "watchtower"], next: { pop: 7, iron: 6 } },
-  { name: "Город", queue: ["townhall", "stonehouse", "barracks", "farm", "stonehouse", "watchtower"], next: { pop: 12, iron: 15 } },
+  { name: "Деревня", queue: ["house", "smithy", "farm", "pen", "house", "herbalist", "barn", "watchtower"], next: { pop: 7, iron: 6 } },
+  { name: "Город", queue: ["townhall", "stonehouse", "library", "barracks", "farm", "stonehouse", "watchtower"], next: { pop: 12, iron: 15 } },
   { name: "Королевство", queue: ["castle", "stonehouse", "watchtower", "farm", "barracks", "stonehouse"], next: { pop: 30, iron: 40, coins: 2000 } },
   // Сверхбогатые поселения начинают индустриализацию: стекольный завод и небоскрёбы.
   { name: "Индустриализация", queue: ["glassworks", "skyscraper", "farm", "skyscraper", "skyscraper"], next: null },
 ];
 const HOUSE_BY_ERA = ["hut", "house", "stonehouse", "stonehouse", "stonehouse"];
+export const HOUSE_TYPES = HOUSE_BY_ERA;
 const FARM_BY_ERA = ["farm_small", "farm", "farm", "farm", "farm"];
 
 // Постройки, уже оплаченные в фоновой симуляции, считаются построенными.
@@ -219,6 +221,8 @@ const RES_BY_RU = { дерево: "wood", камень: "stone", железо: "
 
 /** Самый острый дефицит: голод, ресурс, без которого стоит стройка, или самый крупный долг по содержанию. */
 export function deficitOf(civ) {
+  // Приказ правителя «бросить силы на ресурс» важнее всего.
+  if (civ._def?.forced && civ._def.until > S.clock) return civ._def.res;
   let res = null;
   if (civ.starving) res = "food";
   else if (RES_BY_RU[civ.waiting]) res = RES_BY_RU[civ.waiting];
@@ -284,6 +288,12 @@ export function hungerTick(civ) {
 // ---------- Рост населения ----------
 export const MAX_POP = 100;
 export function growthTick(civ) {
+  // Праздник — рождений вдвое больше.
+  if ((civ.festUntil ?? 0) > S.clock && !civ._festBirth) {
+    civ._festBirth = true;
+    growthTick(civ);
+    civ._festBirth = false;
+  }
   const pop = popOf(civ);
   if (civ.starving || pop >= MAX_POP || pop < 1) return;
   if (pop >= housingOf(civ) || civ.res.food < 10 + pop) return;
@@ -365,7 +375,17 @@ export const noteBuilt = (civ, t) => (civ.lastHouse = HOUSE_BY_ERA.includes(t));
 
 export function chooseNext(civ) {
   if ((civ.blockedUntil ?? 0) > S.clock) return null;
+  // Приказ правителя-игрока — в первую очередь.
+  if (civ.order && TYPES[civ.order]) {
+    const t = civ.order;
+    civ.order = null;
+    return { t, fromQueue: missingQueue(civ).includes(t) };
+  }
   const pop = popOf(civ);
+  // Приморское поселение строит пристань для морской торговли.
+  if (civ.era >= 2 && civ.coastal && !has(civ, "pier") && (civ.failed?.pier ?? 0) <= S.clock && has(civ, "townhall")) return { t: "pier", fromQueue: false };
+  // Богатое королевство возводит чудо света.
+  if (civ.era >= 3 && !has(civ, "wonder") && (civ.res.stone ?? 0) >= 700 && (civ.failed?.wonder ?? 0) <= S.clock) return { t: "wonder", fromQueue: false };
   // Постройки эпохи, для которых сейчас не нашлось места, пробуем снова через 2 минуты.
   const miss = missingQueue(civ).filter((t) => (civ.failed?.[t] ?? 0) <= S.clock);
   if (miss[0] === "center" || !has(civ, "center")) return { t: "center", fromQueue: true };
@@ -449,11 +469,9 @@ function validate(civ, c, gap = 2) {
     if (!g || g.unnatural) return undefined;
     let y = g.y;
     if (g.liquid) {
-      // Мелководье (до 5 блоков) засыпают землёй — получается остров; глубже не строят.
-      const bed = seabed(dim, c.x + x, c.z + z, g.y);
-      if (bed === undefined || g.y - bed > 5) return undefined;
+      // Вода любой глубины: под полом кладут один слой земли — насыпь-плот, на ней и строят.
       water = Math.max(water, g.y);
-      y = bed;
+      y = g.y - 1;
     }
     min = Math.min(min, y);
     max = Math.max(max, y);
@@ -475,7 +493,7 @@ function validate(civ, c, gap = 2) {
   // Высокая постройка не должна упираться в потолок мира (иначе стройка никогда не закончится).
   if (base + dims(c.t, c.r).H + 3 > 319) return undefined;
   let fill = 0;
-  for (const y of hs) fill += Math.max(0, base - 1 - y);
+  for (const y of hs) fill += Math.min(1, Math.max(0, base - 1 - y)) + Math.max(0, base - 2 - y);
   // Вода рядом опасна, только если пол окажется не выше неё — тогда площадку затопит.
   for (let x = -2; x <= c.W + 1; x++) for (let z = -2; z <= c.D + 1; z++) {
     if (x >= 0 && x < c.W && z >= 0 && z < c.D) continue;
@@ -619,6 +637,12 @@ export function completeProject(civ) {
   sound(dim, "random.levelup", mid, 0.8);
   for (let i = 0; i < 6; i++) particle(dim, "minecraft:villager_happy", { x: mid.x + rnd(-2, 2), y: mid.y + rnd(0, 2), z: mid.z + rnd(-2, 2) });
   note("build", `${civ.name}: построено «${TYPES[p.t].name}»`);
+  if (p.t === "pen" && !civ._batch) stockPen(b);
+  if (p.t === "wonder") {
+    civ.mood = Math.min(100, (civ.mood ?? 60) + 20);
+    for (const o of S.civs.values()) if (o !== civ) o.tension[civ.id] = (o.tension[civ.id] ?? 0) + 10; // зависть соседей
+    note("events", `${civ.name} возвели чудо света — Маяк! Слава на весь мир, соседи завидуют`);
+  }
   if (p.t !== "center") layRoad(civ.center, doorFront(b));
   // Поселение выросло — стену перестраивают под новые габариты.
   if (civ.wall && !civ._batch) replanWall(civ);
@@ -861,11 +885,11 @@ function epitaph(civ, enemy) {
   else if (enemy) cause = `уничтожена в войне с ${enemy.name}${civ.war?.reason ? ` (${civ.war.reason})` : ""}`;
   else {
     const top = Object.entries(c).sort((a, b) => b[1] - a[1])[0];
-    const why = { starve: "все умерли от голода", raid: "разграблена и перебита бандитами", mob: "жителей перебили мобы", war: "погибла в войнах" };
+    const why = { starve: "все умерли от голода", raid: "разграблена и перебита бандитами", mob: "жителей перебили мобы", war: "погибла в войнах", disease: "вымерла от эпидемии" };
     cause = top ? why[top[0]] ?? "жители вымерли" : "жители вымерли или разбрелись";
     if (civ.defaulted) cause += "; до этого отказалась платить по кредиту";
   }
-  const deaths = Object.entries(c).map(([k, v]) => `${{ starve: "голод", raid: "бандиты", mob: "мобы", war: "война" }[k] ?? k} ${v}`).join(", ");
+  const deaths = Object.entries(c).map(([k, v]) => `${{ starve: "голод", raid: "бандиты", mob: "мобы", war: "война", disease: "болезни" }[k] ?? k} ${v}`).join(", ");
   return `${civ.name}: ${cause}. Просуществовала ${lifespan(S.clock - (civ.founded ?? S.clock))}, максимум жителей ${civ.peakPop ?? 0}, эпоха «${ERAS[civ.era].name}», построек ${civ.buildings.length}${deaths ? `; погибшие: ${deaths}` : ""}`;
 }
 export function collapseCheck(civ) {

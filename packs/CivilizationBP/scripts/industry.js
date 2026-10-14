@@ -5,6 +5,7 @@ import { has, missingQueue } from "./society.js";
 import { insideWall } from "./walls.js";
 import { getBP } from "./blueprints.js";
 import { note } from "./journal.js";
+import { techMult } from "./progress.js";
 
 // Индустриализация: песочники копают песок, стекольный завод плавит его в стекло
 // (8 стекла на 1 уголь). Нет песка поблизости — стекло и песок покупают на рынке.
@@ -162,7 +163,7 @@ function digThink(key, civ, ent, brain, tick) {
     }
   }
   brain.dig = null;
-  brain.cd = tick + Math.max(3, Math.round(8 / S.speed));
+  brain.cd = tick + Math.max(3, Math.round(8 / S.speed / (key === "stone" ? techMult(civ, "picks") : 1)));
 }
 
 /** Песочник: копает песок для стекла. */

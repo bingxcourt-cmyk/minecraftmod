@@ -12,6 +12,9 @@ import { raidOffscreen } from "./bandits.js";
 import { planWall } from "./walls.js";
 import { note, warLog } from "./journal.js";
 import { colonySiteFree } from "./territory.js";
+import { lifeTick } from "./life.js";
+import { scienceTick, husbandryTick, techMult } from "./progress.js";
+import { siegeTick } from "./siege.js";
 
 // Поселение «живое», если рядом есть игрок (в пределах симуляции) и чанк центра загружен.
 // Дальше — фоновая симуляция по формулам, а результат появляется, когда игрок вернётся.
@@ -135,10 +138,10 @@ export function offscreenTick(civ, dt) {
   const mult = (role) => TIERS[T[role] ?? 0].mult;
 
   // Добыча.
-  const wood = (R.lumberjack ?? 0) * RATE.wood(mult("lumberjack")) * RATE.eff * k;
+  const wood = (R.lumberjack ?? 0) * RATE.wood(mult("lumberjack")) * RATE.eff * k * techMult(civ, "axes");
   gain(civ, off, "wood", wood);
   if ((civ.res.saplings ?? 0) < 64) gain(civ, off, "saplings", wood / 30); // примерно 1 саженец с двух деревьев
-  const blocks = (R.miner ?? 0) * RATE.blocks(mult("miner")) * RATE.eff * k;
+  const blocks = (R.miner ?? 0) * RATE.blocks(mult("miner")) * RATE.eff * k * techMult(civ, "picks");
   // В камне попадаются андезит и уголь — их откладывают отдельно.
   gain(civ, off, "stone", blocks * 0.85);
   gain(civ, off, "andesite", blocks * 0.1);
@@ -165,7 +168,7 @@ export function offscreenTick(civ, dt) {
   // Еда и голод.
   const farms = count(civ, (b) => b.t.startsWith("farm")) + (civ.offQueue ?? []).filter((q) => q.t.startsWith("farm")).length;
   const farmers = Math.min(R.farmer ?? 0, farms * 2);
-  const food = (farmers * RATE.food(mult("farmer")) + (R.hunter ?? 0) * RATE.hunt) * RATE.eff * k - pop * RATE.eat * k;
+  const food = (farmers * RATE.food(mult("farmer")) * techMult(civ, "plough") + (R.hunter ?? 0) * RATE.hunt) * RATE.eff * k - pop * RATE.eat * k;
   const f = civ.res.food + food + (off.frac.food ?? 0);
   civ.res.food = Math.max(0, Math.min(foodCap(civ), Math.floor(f)));
   off.frac.food = f > 0 ? f - Math.floor(f) : 0;
@@ -217,7 +220,7 @@ export function offscreenTick(civ, dt) {
 
   // Стройка: строители ставят ~60 блоков в минуту, если ресурсов хватает на всю постройку.
   const builders = Math.max(R.builder ?? 0, pop >= 3 ? 1 : 0);
-  off.build = Math.min(3000, off.build + builders * RATE.build * RATE.eff * k);
+  off.build = Math.min(3000, off.build + builders * RATE.build * RATE.eff * k * (civ.ruler?.trait === "builder" ? 1.3 : 1));
   civ.offQueue = civ.offQueue ?? [];
   // Оплаченная постройка, которую начали ставить при игроке, — вдали возвращается в очередь
   // (иначе фоновая стройка остановилась бы).
@@ -260,6 +263,24 @@ export function offscreenTick(civ, dt) {
   }
   craftTorches(civ);
   raidOffscreen(civ, off, k);
+  // Настроение, праздники, бунты, болезни, правители, наука, загоны, осада — как вживую.
+  lifeTick(civ, k, {
+    liveRemove: (c, n) => {
+      offOf(c).pop -= n;
+    },
+    foundRebels: (c, dest, n) => virtualColony(c, dest, n, false),
+    kill: (c) => {
+      if (popOf(c) <= 0) return;
+      offOf(c).pop--;
+      offOf(c).died++;
+      c.deaths++;
+      c.causes = c.causes ?? {};
+      c.causes.disease = (c.causes.disease ?? 0) + 1;
+    },
+  });
+  scienceTick(civ, k);
+  husbandryTick(civ, k);
+  siegeTick(civ);
   planWall(civ);
   eraTick(civ);
   colonyOffscreen(civ, pop);
@@ -379,7 +400,7 @@ export function materialize(civ) {
 // ---------- Война вдали от игрока ----------
 function army(civ) {
   const pop = popOf(civ);
-  const soldiers = Math.max(1, Math.floor(pop * 0.45));
+  const soldiers = Math.max(1, Math.floor(pop * 0.45)) + (civ.war?.mercs ?? 0);
   const tier = civ.census?.tiers?.soldier ?? civ.census?.tiers?.hunter ?? 1;
   let power = soldiers * (TIERS[tier].dmg + Math.floor(civ.era / 2) + (has(civ, "barracks") ? 1 : 0));
   if (has(civ, "watchtower")) power *= 1.2;

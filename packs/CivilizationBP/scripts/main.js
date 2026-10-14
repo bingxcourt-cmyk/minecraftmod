@@ -20,6 +20,15 @@ import { planWall, layWalls } from "./walls.js";
 import { demoTick } from "./territory.js";
 import { upkeepTick, repayDebt, UPKEEP } from "./upkeep.js";
 import { taxTick } from "./market.js";
+import { lifeTick, lifeFx } from "./life.js";
+import { scienceTick, husbandryTick } from "./progress.js";
+import { siegeTick } from "./siege.js";
+import { pactTick } from "./pacts.js";
+import { caravanTick, loadCaravans, cleanupCaravanLlamas, setPolyPoint } from "./caravans.js";
+import { questTick } from "./quests.js";
+import { virtualColony } from "./offscreen.js";
+import { waterNear } from "./blocks.js";
+import { polyPoint } from "./links.js";
 import { smeltTick } from "./industry.js";
 import { creditTick, loadLoans, saveLoans } from "./credit.js";
 import { lightsTick } from "./lights.js";
@@ -103,6 +112,33 @@ function regroup() {
   }
 }
 
+// Вживую: бунтовщики уходят (их сущности исчезают), больные умирают.
+const LIVE_HOOKS = {
+  liveRemove: (civ, n) => {
+    const list = (S.members.get(civ.id) ?? []).filter((e) => !["guard", "soldier", "golem"].includes(brainOf(e, civ.id).role)).slice(0, n);
+    for (const e of list) {
+      S.brains.delete(e.id);
+      try {
+        e.remove();
+      } catch {}
+    }
+  },
+  foundRebels: (civ, dest, n) => virtualColony(civ, dest, n, false),
+  kill: (civ) => {
+    const list = S.members.get(civ.id) ?? [];
+    const e = list[Math.floor(Math.random() * list.length)];
+    if (!e) return;
+    civ.deaths++;
+    civ.causes = civ.causes ?? {};
+    civ.causes.disease = (civ.causes.disease ?? 0) + 1;
+    note("people", `${civ.name}: умер от болезни — ${S.brains.get(e.id)?.name ?? "житель"}`);
+    S.brains.delete(e.id);
+    try {
+      e.remove();
+    } catch {}
+  },
+};
+
 function everySecond() {
   if (S.catchingUp) return; // идёт пересчёт времени, пока вас не было
   S.clock++;
@@ -158,7 +194,12 @@ function everySecond() {
       }
       raidCheck(civ);
       if (S.clock % 60 === 33) raidTick(civ);
+      lifeFx(civ);
       if (S.clock % 10 === 0) {
+        lifeTick(civ, (10 / 60) * S.speed, LIVE_HOOKS);
+        scienceTick(civ, (10 / 60) * S.speed);
+        husbandryTick(civ, (10 / 60) * S.speed);
+        siegeTick(civ);
         armorTick(civ);
         smeltTick(civ, (10 / 60) * S.speed);
         eraTick(civ);
@@ -178,6 +219,11 @@ function everySecond() {
     layWalls();
     demoTick();
     // Содержание зданий — по часам устройства (реальное время), один общий процесс для всех поселений.
+    caravanTick();
+    if (S.clock % 60 === 25) pactTick();
+    if (S.clock % 60 === 40) for (const civ of S.civs.values()) if (civ._active) questTick(civ);
+    // Приморское ли поселение (для пристани) — проверяем изредка, пока чанки загружены.
+    if (S.clock % 300 === 17) for (const civ of S.civs.values()) if (civ._active) civ.coastal = waterNear(DIM(), Math.floor(civ.center.x), Math.floor(civ.center.z), 40);
     upkeepTick(Date.now());
     // Налог: 0.5 монеты в минуту с каждого жителя (раз в 10 секунд).
     if (S.clock % 10 === 0) for (const civ of S.civs.values()) taxTick(civ, 10 / 60);
@@ -318,6 +364,9 @@ function start() {
   loadMarket();
   loadLoans();
   loadJournal();
+  loadCaravans();
+  setPolyPoint(polyPoint);
+  system.runTimeout(() => cleanupCaravanLlamas(), 100);
   catchUp();
   system.runInterval(moveAll, 2);
   system.runInterval(thinkAll, 10);

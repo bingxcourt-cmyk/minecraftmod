@@ -5,6 +5,8 @@ import { remainingCost, foodCap } from "./workers.js";
 import { note } from "./journal.js";
 import { money, fmtCoins, transfer, MIN_PRICE } from "./money.js";
 import { COINS_PER_GOLD } from "./mine.js";
+import { hasPact } from "./pacts.js";
+import { routeOf, sendCaravan, transitOf } from "./caravans.js";
 import { RATE } from "./offscreen.js";
 import { wallLeft, WALL_STONE } from "./walls.js";
 import { glassGoal, DIRT_RESERVE } from "./industry.js";
@@ -17,12 +19,12 @@ import { has, START_COINS } from "./society.js";
 // Цена: продавец ставит чуть дешевле конкурентов (или по цене последней сделки, если конкурентов нет);
 // непроданный лот каждую минуту дешевеет на 10% — нижнего предела нет. Товар нужен, а его нет —
 // цена последней сделки растёт на 5% (до ×5 базовой).
-export const BASE = { wood: 1, stone: 1, dirt: 0.5, andesite: 1.5, food: 2, coal: 4, saplings: 6, sand: 1.5, glass: 4, iron: 64, diamond: 512 };
-const CAP = { wood: 200, stone: 200, dirt: 200, andesite: 120, food: 80, coal: 20, saplings: 10, sand: 128, glass: 160, iron: 10, diamond: 2 };
-const LOT_MAX = { wood: 600, stone: 600, dirt: 600, andesite: 300, food: 200, coal: 100, saplings: 40, sand: 400, glass: 400, iron: 40, diamond: 8 };
-export const GOOD_NAME = { wood: "дерево", stone: "камень", dirt: "земля", andesite: "андезит", food: "еда", coal: "уголь", saplings: "саженцы", sand: "песок", glass: "стекло", iron: "железо", diamond: "алмазы" };
+export const BASE = { wood: 1, stone: 1, dirt: 0.5, andesite: 1.5, food: 2, coal: 4, saplings: 6, sand: 1.5, glass: 4, wool: 2, leather: 3, iron: 64, diamond: 512 };
+const CAP = { wood: 200, stone: 200, dirt: 200, andesite: 120, food: 80, coal: 20, saplings: 10, sand: 128, glass: 160, wool: 40, leather: 30, iron: 10, diamond: 2 };
+const LOT_MAX = { wood: 600, stone: 600, dirt: 600, andesite: 300, food: 200, coal: 100, saplings: 40, sand: 400, glass: 400, wool: 200, leather: 120, iron: 40, diamond: 8 };
+export const GOOD_NAME = { wood: "дерево", stone: "камень", dirt: "земля", andesite: "андезит", food: "еда", coal: "уголь", saplings: "саженцы", sand: "песок", glass: "стекло", wool: "шерсть", leather: "кожа", iron: "железо", diamond: "алмазы" };
 // С какого излишка (сверх своих нужд) товар выставляют на продажу.
-const SELL_FROM = { food: 10, wood: 60, stone: 60, dirt: 60, andesite: 30, coal: 10, saplings: 8, sand: 40, glass: 40, iron: 8, diamond: 2 };
+const SELL_FROM = { food: 10, wood: 60, stone: 60, dirt: 60, andesite: 30, coal: 10, saplings: 8, sand: 40, glass: 40, wool: 10, leather: 10, iron: 8, diamond: 2 };
 const SOCIAL_SAPLINGS = 20; // бесплатных саженцев в фонде на весь мир
 const SOCIAL_PER_CIV = 4; // одному поселению — не больше 4
 
@@ -93,7 +95,9 @@ function post(civ, k, qty) {
 export const TAX_PER_MIN = 0.5;
 export function taxTick(civ, minutes) {
   const pop = popOf(civ);
-  if (pop > 0) civ.coins = money((civ.coins ?? 0) + pop * TAX_PER_MIN * minutes);
+  // Правитель-торговец собирает налогов в полтора раза больше, чудо света — ещё +20%.
+  const k = (civ.ruler?.trait === "trader" ? 1.5 : 1) * (has(civ, "wonder") ? 1.2 : 1);
+  if (pop > 0) civ.coins = money((civ.coins ?? 0) + pop * TAX_PER_MIN * minutes * k);
 }
 
 /** Важность покупки: чем больше, тем раньше на неё тратят монеты. */
@@ -169,18 +173,27 @@ function buy(civ, k, qty) {
   if (k === "food") qty = Math.min(qty, Math.max(0, foodCap(civ) - (civ.res.food ?? 0)));
   if (!(qty > 0)) return { qty: 0, cost: 0, from: "" };
   let got = 0;
+  let shipped = 0;
   let cost = 0;
   const from = [];
   for (const l of lotsOf(k, civ.id)) {
     if (got >= qty) break;
     // Цена и суммы — с точностью до 0.000001 монеты; покупатель платит ровно столько, сколько получает продавец.
-    let q = Math.min(qty - got, l.qty, Math.floor(money(civ.coins ?? 0) / l.price + 1e-9));
-    while (q > 0 && money(q * l.price) > money(civ.coins ?? 0)) q--;
-    if (!(q > 0)) break;
     const seller = l.civ ? S.civs.get(l.civ) : undefined;
-    const c = transfer(civ, seller, q * l.price); // лот «старого торгового дома» — монеты уходят из оборота
+    // Торговый союз: у союзника покупают на 10% дешевле.
+    const p = seller && hasPact(civ, seller, "trade") ? money(Math.max(MIN_PRICE, l.price * 0.9)) : l.price;
+    let q = Math.min(qty - got, l.qty, Math.floor(money(civ.coins ?? 0) / p + 1e-9));
+    while (q > 0 && money(q * p) > money(civ.coins ?? 0)) q--;
+    if (!(q > 0)) break;
+    const c = transfer(civ, seller, q * p); // лот «старого торгового дома» — монеты уходят из оборота
     l.qty -= q;
     got += q;
+    // Есть дорога или пристани — товар везёт караван, на склад он придёт позже.
+    const route = seller ? routeOf(seller, civ) : null;
+    if (route) {
+      sendCaravan(seller, civ, k, q, route);
+      shipped += q;
+    }
     cost = money(cost + c);
     S.market.last[k] = l.price;
     if (seller) {
@@ -191,9 +204,9 @@ function buy(civ, k, qty) {
     }
     from.push(`${q} у ${sellerName(l)}`);
   }
-  civ.res[k] = (civ.res[k] ?? 0) + got;
+  civ.res[k] = (civ.res[k] ?? 0) + got - shipped;
   if (k === "food") civ.res.food = Math.min(civ.res.food, foodCap(civ));
-  return { qty: got, cost, from: from.join(", ") };
+  return { qty: got, cost, from: from.join(", ") + (shipped ? ` (${shipped} везёт караван)` : "") };
 }
 
 /** Чего поселению реально не хватает прямо сейчас (а не «на всякий случай»). */
@@ -232,6 +245,8 @@ function needsOf(civ) {
   for (const [k, v] of Object.entries(civ.upkeep?.debt ?? {})) if (v > 0 && CAP[k]) need[k] = Math.max(need[k] ?? 0, v);
   // Нет леса — нужны саженцы.
   if (civ.needSaplings) need.saplings = Math.max(0, 8 - (civ.res.saplings ?? 0));
+  // Что уже едет караваном — повторно не покупают.
+  for (const k in need) need[k] = Math.max(0, need[k] - transitOf(civ, k));
   for (const k in need) need[k] = Math.min(CAP[k], Math.ceil(need[k]));
   return need;
 }
@@ -254,6 +269,8 @@ function spareOf(civ) {
     glass: glassGoal(civ),
     dirt: (rc.dirt ?? 0) + DIRT_RESERVE, // запас земли на выравнивание следующих площадок
     sand: has(civ, "glassworks") ? 1e9 : 0, // песок с заводом идёт в плавку
+    wool: 0,
+    leather: 20, // на кожаную броню стражи
     diamond: 0,
   };
   const spare = {};

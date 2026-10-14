@@ -2,6 +2,7 @@ import { DIM, getB, markDirty, sound, particle, cdTicks } from "./core.js";
 import { canPass, isStoneLike, isIronOre, isProtected, isLog, strip } from "./blocks.js";
 import { setTarget, near, updateTag, wander } from "./workers.js";
 import { useTool } from "./tools.js";
+import { techMult } from "./progress.js";
 import { deferLight } from "./lights.js";
 
 // Шахта как у игрока: лестница вниз шириной в 1 блок пролётами по FLIGHT ступенек
@@ -225,7 +226,7 @@ export function minerThink(civ, ent, brain, tick) {
     const b = getB(dim, v.x, v.y, v.z);
     if (!b || !isOre(b.typeId)) continue;
     if (Math.hypot(v.x + 0.5 - ent.location.x, v.y - ent.location.y, v.z + 0.5 - ent.location.z) > 5) continue;
-    brain.cd = tick + cdTicks(22 * breakBlock(civ, m, ent, brain, b, v), brain);
+    brain.cd = tick + cdTicks((22 * breakBlock(civ, m, ent, brain, b, v)) / techMult(civ, "picks"), brain);
     return;
   }
 
@@ -254,7 +255,7 @@ export function minerThink(civ, ent, brain, tick) {
       markDirty(civ);
       return;
     }
-    brain.cd = tick + cdTicks(22 * breakBlock(civ, m, ent, brain, b, pos), brain);
+    brain.cd = tick + cdTicks((22 * breakBlock(civ, m, ent, brain, b, pos)) / techMult(civ, "picks"), brain);
     return;
   }
 
