@@ -8,6 +8,7 @@ import { progressRoads, planRoads } from "./links.js";
 import { marketTick } from "./market.js";
 import { popOf } from "./society.js";
 import { ERAS } from "./society.js";
+import { upkeepTick, repayDebt } from "./upkeep.js";
 
 // Время телефона: пока вас нет в игре, жизнь продолжается.
 // При заходе считаем, сколько реального времени прошло, и прогоняем фоновую симуляцию за этот срок.
@@ -48,6 +49,11 @@ export function catchUp(onDone) {
       }
       progressRoads(STEP);
       progressWalls(STEP);
+      // Содержание зданий за время вне игры: периоды начисляются по реальному времени шага.
+      try {
+        upkeepTick(now - (seconds - (s + 1) * STEP) * 1000);
+        for (const civ of S.civs.values()) repayDebt(civ);
+      } catch {}
       if (s % 5 === 0) planRoads();
       try {
         diplomacyTick();

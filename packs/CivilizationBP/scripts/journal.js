@@ -11,6 +11,7 @@ const CATS = {
   build: { name: "Стройка и дороги", max: 60 },
   people: { name: "Жители: рождения и смерти", max: 60 },
   events: { name: "События", max: 60 },
+  upkeep: { name: "Содержание зданий", max: 60 },
 };
 const MAX_WARS = 8;
 const MAX_WAR_LOG = 30;

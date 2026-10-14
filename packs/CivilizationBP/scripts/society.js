@@ -12,6 +12,7 @@ import { blockerOf, colonySiteFree, clearRuins } from "./territory.js";
 import { isOwnWall, clearWallFor, replanWall } from "./walls.js";
 import { glassShort, dirtShort } from "./industry.js";
 import { virtualColony } from "./offscreen.js";
+import { buildCost } from "./upkeep.js";
 
 export const ERAS = [
   { name: "Племя", queue: ["center", "farm_small", "hut", "hut", "well"], next: { pop: 4, stone: 10 } },
@@ -532,7 +533,8 @@ export function completeProject(civ) {
   const p = civ.project;
   if (!p) return;
   const { W, D } = dims(p.t, p.r);
-  const b = { t: p.t, x: p.x, y: p.y, z: p.z, r: p.r, w: W, d: D };
+  // Стоимость строительства фиксируется при постройке — от неё считается содержание.
+  const b = { t: p.t, x: p.x, y: p.y, z: p.z, r: p.r, w: W, d: D, cost: buildCost(p.t) };
   civ.buildings.push(b);
   if (p.fromQueue) civ.qi++;
   if (p.t === "center") {
@@ -723,7 +725,7 @@ export function streamBuild(civ) {
           misses = 0;
         }
         if (!civ.project.paid) break;
-        const r = fastBuild(civ, 400);
+        const r = fastBuild(civ, 800);
         if (r === "done") {
           completeProject(civ);
           built++;

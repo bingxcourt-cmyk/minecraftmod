@@ -1,3 +1,4 @@
+import { system } from "@minecraft/server";
 import { S, DIM, getB, loaded, markDirty, sound, particle, levelOf } from "./core.js";
 import { groundAt, isPassableId, isNatural } from "./blocks.js";
 import { remainingCost, digYield } from "./workers.js";
@@ -507,21 +508,25 @@ export function layWalls() {
   }
   for (const civ of S.civs.values()) {
     const w = civ.wall;
-    if (!w?.s || (w.repairAt ?? 0) > S.clock) continue;
-    const g = geo(civ);
-    const n = g.cols.length;
-    if (!n) continue;
-    const chars = w.s.split("");
-    let budget = 6;
-    for (let k = 0; k < 80 && budget > 0; k++) {
-      const i = ((w.cur ?? 0) + k) % n;
-      if (chars[i] !== "p") continue;
-      if (!placeColumn(civ, g, i)) continue;
-      chars[i] = "1";
-      budget--;
-    }
-    w.cur = ((w.cur ?? 0) + 80) % n;
-    w.s = chars.join("");
+    if (!w?.s || (w.repairAt ?? 0) > S.clock || civ._wallJob || !w.s.includes("p")) continue;
+    // Всё оплаченное появляется сразу, как только чанки загружены: фоновая задача ставит столбы
+    // подряд, порциями по 12 за шаг (без рывков), пока не поставит все, до каких может дотянуться.
+    civ._wallJob = true;
+    system.runJob(
+      (function* () {
+        try {
+          const g = geo(civ);
+          for (let i = 0; i < g.cols.length; i++) {
+            if (!civ.wall?.s || civ.wall.c !== g.c) break; // стену перестроили или снесли — начнём заново
+            if (civ.wall.s[i] !== "p") continue;
+            if (placeColumn(civ, g, i)) civ.wall.s = civ.wall.s.slice(0, i) + "1" + civ.wall.s.slice(i + 1);
+            if (i % 12 === 11) yield;
+          }
+        } finally {
+          civ._wallJob = false;
+        }
+      })(),
+    );
   }
 }
 

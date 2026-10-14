@@ -131,7 +131,7 @@ function shape(r, A, B) {
   const halfA = Math.ceil((n + 1) / 2);
   Object.assign(r, {
     pts, x1: A.x, z1: A.z, y1: A.y, x2: B.x, z2: B.z, y2: B.y, s1: ROAD_SKIP, s2: ROAD_SKIP,
-    done: "0".repeat(n + 1), cur: 0, fix: 0, v: 4,
+    done: "0".repeat(n + 1), cur: 0, fix: 0, v: 4, gen: (r.gen ?? 0) + 1,
     pa: Math.min(r.pa ?? 0, halfA), pb: Math.min(r.pb ?? 0, n + 1 - halfA),
   });
 }
@@ -339,6 +339,8 @@ export function progressRoads(dt) {
   }
 }
 
+const laying = new Set(); // дороги, которые сейчас кладёт фоновая задача
+
 /** Раз в секунду: прогресс растёт, а построенные участки появляются там, где загружены чанки. */
 export function layRoads() {
   const dim = DIM();
@@ -347,9 +349,9 @@ export function layRoads() {
   let changed = false;
   for (const r of S.roads ?? []) {
     if (r.v !== 4) continue; // старую дорогу переложат по-новому при ближайшем планировании
-    if (budget <= 0) break;
     const n = r.done.length - 1;
     if (!r.done.includes("0")) {
+      if (budget <= 0) continue;
       // Дорога готова — работяги обходят её и исправляют сломанное (по 2 участка в секунду).
       for (let k = 0; k < 2; k++) {
         r.fix = ((r.fix ?? 0) + 1) % (n + 1);
@@ -357,18 +359,28 @@ export function layRoads() {
       }
       continue;
     }
-    const chars = r.done.split("");
-    for (let k = 0; k < 60 && budget > 0; k++) {
-      const i = (r.cur + k) % (n + 1);
-      if (chars[i] === "1") continue;
-      if (i >= (r.pa ?? 0) && i <= n - (r.pb ?? 0)) continue; // ещё не построено
-      if (!layRoadPoint(dim, r, i)) continue;
-      chars[i] = "1";
-      budget--;
-      changed = true;
-    }
-    r.cur = (r.cur + 60) % (n + 1);
-    r.done = chars.join("");
+    // Всё оплаченное появляется сразу, как только чанки загружены: фоновая задача кладёт
+    // все готовые участки подряд (по 8 за шаг, чтобы не было рывков).
+    if (laying.has(r)) continue;
+    laying.add(r);
+    changed = true;
+    system.runJob(
+      (function* () {
+        try {
+          const gen = r.gen;
+          for (let i = 0; i <= n; i++) {
+            if (r.gen !== gen) break; // дорогу переложили — новая задача начнёт заново
+            if (r.done[i] === "1") continue;
+            if (i >= (r.pa ?? 0) && i <= n - (r.pb ?? 0)) continue; // ещё не оплачено
+            if (!layRoadPoint(DIM(), r, i)) continue;
+            r.done = r.done.slice(0, i) + "1" + r.done.slice(i + 1);
+            if (i % 8 === 7) yield;
+          }
+        } finally {
+          laying.delete(r);
+        }
+      })(),
+    );
   }
   scrapTick(dim);
   if ((changed || (S.roads ?? []).length) && S.clock % 10 === 0) saveRoads();
@@ -424,7 +436,7 @@ function scrapColumn(dim, x, z) {
 function scrapTick(dim) {
   const q = S.roadDemo?.[0];
   if (!q) return;
-  let budget = 6;
+  let budget = 30;
   while (q.i <= q.n && budget > 0) {
     const i = q.i;
     if (q.done[i] !== "1") {

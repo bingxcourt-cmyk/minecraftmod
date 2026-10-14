@@ -157,8 +157,10 @@ export function splitDebtLoot(loser, winner) {
   for (const k in loser.res) take[k] = Math.floor((loser.res[k] ?? 0) * 0.5);
   loser.coins = (loser.coins ?? 0) - take.coins;
   for (const k in loser.res) loser.res[k] -= take[k];
+  let taken = 0;
   const give = (c, share) => {
     c.coins = (c.coins ?? 0) + Math.floor(take.coins * share);
+    taken += Math.floor(take.coins * share);
     for (const k in loser.res) c.res[k] = (c.res[k] ?? 0) + Math.floor(take[k] * share);
     markDirty(c);
   };
@@ -170,6 +172,8 @@ export function splitDebtLoot(loser, winner) {
       a._reassign = true;
     }
   }
+  // Остаток от деления монет (чтобы деньги не пропадали при округлении) — кредитору.
+  winner.coins = (winner.coins ?? 0) + (take.coins - taken);
   loan.status = "collected";
   return `забрали ${take.coins} мон. и половину запасов: 50% — ${winner.name}${allies.length ? ", 50% — " + allies.map((a) => a.name).join(", ") : ""}`;
 }

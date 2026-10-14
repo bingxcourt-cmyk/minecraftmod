@@ -12,6 +12,7 @@ import { marketText } from "./market.js";
 import { showJournal } from "./journal.js";
 import { creditText, repOf, debtOf } from "./credit.js";
 import { wallInfo } from "./walls.js";
+import { upkeepInfo } from "./upkeep.js";
 import { TOOL_FOR, TIERS, toolTier } from "./tools.js";
 
 export function nearestCiv(p, maxDist) {
@@ -144,6 +145,7 @@ export function showCivForm(pl, civ) {
     `§lСклад:§r земля ${r.dirt ?? 0}, андезит ${r.andesite ?? 0}, уголь ${r.coal ?? 0}, факелы ${r.torches ?? 0}${r.sand || r.glass ? `, песок ${r.sand ?? 0}, стекло ${r.glass ?? 0}` : ""}${civ.lights?.length ? ` §e(ждут света: ${civ.lights.length} мест)` : ""}`,
     `§lРепутация:§r ${repOf(civ)}${debtOf(civ) ? `, §cдолг ${debtOf(civ).ln}: ${debtOf(civ).paid}/${debtOf(civ).due}§r` : ""}${civ.marketBan ? " §c(рынок закрыт)" : ""}`,
     `§lСтена:§r ${wallInfo(civ)}`,
+    `§lСодержание зданий:§r ${upkeepInfo(civ)}`,
     `§lКазна:§r ${Math.floor(civ.coins ?? 0)} монет${civ.needSaplings ? "  §2(ищут саженцы — вокруг нет леса)" : ""}`,
     `§lИнструменты:§r ${toolSummary(civ)}`,
     `§lШахта:§r ${mineInfo(civ)}`,

@@ -129,7 +129,7 @@ export function demoTick() {
   }
   const H = e.h + 3;
   const total = e.w * e.d * H;
-  let budget = 300;
+  let budget = 1500;
   while (e.i < total && budget > 0) {
     const layer = Math.floor(e.i / (e.w * e.d));
     const rest = e.i % (e.w * e.d);

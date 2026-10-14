@@ -18,6 +18,7 @@ import { scanThreats, armorTick } from "./defense.js";
 import { raidTick, raidCheck, raiderThink, raidPropOf } from "./bandits.js";
 import { planWall, layWalls } from "./walls.js";
 import { demoTick } from "./territory.js";
+import { upkeepTick, repayDebt, UPKEEP } from "./upkeep.js";
 import { smeltTick } from "./industry.js";
 import { creditTick, loadLoans, saveLoans } from "./credit.js";
 import { lightsTick } from "./lights.js";
@@ -160,6 +161,9 @@ function everySecond() {
     layRoads();
     layWalls();
     demoTick();
+    // Содержание зданий — по часам устройства (реальное время), один общий процесс для всех поселений.
+    upkeepTick(Date.now());
+    if (S.clock % UPKEEP.REPAY_EVERY_SEC === 0) for (const civ of S.civs.values()) repayDebt(civ);
     if (S.clock % 5 === 0) foundingScan();
     statusTick();
   } catch (e) {
