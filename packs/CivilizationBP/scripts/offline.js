@@ -5,7 +5,7 @@ import { diplomacyTick, declareWar } from "./war.js";
 import { progressWalls } from "./walls.js";
 import { creditTick } from "./credit.js";
 import { progressRoads, planRoads } from "./links.js";
-import { marketTick } from "./market.js";
+import { marketTick, taxTick } from "./market.js";
 import { popOf } from "./society.js";
 import { ERAS } from "./society.js";
 import { upkeepTick, repayDebt } from "./upkeep.js";
@@ -52,7 +52,10 @@ export function catchUp(onDone) {
       // Содержание зданий за время вне игры: периоды начисляются по реальному времени шага.
       try {
         upkeepTick(now - (seconds - (s + 1) * STEP) * 1000);
-        for (const civ of S.civs.values()) repayDebt(civ);
+        for (const civ of S.civs.values()) {
+          repayDebt(civ);
+          taxTick(civ, STEP / 60);
+        }
       } catch {}
       if (s % 5 === 0) planRoads();
       try {

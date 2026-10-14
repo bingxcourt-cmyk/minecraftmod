@@ -183,6 +183,8 @@ export function assignRoles(civ) {
   if (civ.era >= 2 && n >= 12 && wantMiner) give("miner", 1);
   // Индустриализация: песочники копают песок для стекла (если песок есть поблизости).
   if (glassShort(civ) > 0 && !((civ.noSand ?? 0) > S.clock)) give("sander", n >= 14 ? 2 : 1);
+  // Решили, что монеты выгоднее добыть золотом, — ещё два шахтёра (с железной киркой).
+  if ((civ.goldRush ?? 0) > S.clock) give("miner", 2);
   // Площадку под стройку нечем подсыпать — землекопы копают землю.
   if (dirtShort(civ) > 0 && !((civ.noDirt ?? 0) > S.clock)) give("digger", n >= 10 ? 2 : 1);
   if (building && n >= 12) give("builder", 1);
@@ -520,7 +522,8 @@ export function mineTick(civ) {
     const d = Math.abs(vx) > Math.abs(vz) ? (vx > 0 ? 0 : 2) : vz > 0 ? 1 : 3;
     // Первая шахта — до железа (Y≈16), каждая вторая — глубокая, за алмазами.
     const deep = (civ.minesDone ?? 0) % 2 === 1;
-    const target = deep ? -54 : Math.min(16, g.y - 12);
+    // Нужны монеты — шахту ведут в золотой слой (Y≈-16, где золота больше всего).
+    const target = (civ.goldRush ?? 0) > S.clock ? -16 : deep ? -54 : Math.min(16, g.y - 12);
     civ.mine = { x, y: g.y, z, d, target, idx: 0, veins: [], wet: 0 };
     S.qsearch.delete(civ.id);
     markDirty(civ);

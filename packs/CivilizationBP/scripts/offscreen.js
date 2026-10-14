@@ -56,6 +56,7 @@ function rolesFor(civ, n) {
   give("lumberjack", 1);
   if (n >= 3) give("miner", n >= 8 ? 2 : 1);
   if (civ.era >= 2 && n >= 12) give("miner", 1);
+  if ((civ.goldRush ?? 0) > S.clock) give("miner", 2);
   // Песок — только если песочники уже нашли его у поселения (иначе стекло покупают).
   if (civ.sandAt && glassShort(civ) > 0) give("sander", n >= 14 ? 2 : 1);
 
@@ -143,7 +144,8 @@ export function offscreenTick(civ, dt) {
   if ((T.miner ?? 0) >= 3) gain(civ, off, "diamond", blocks * 0.0006); // алмазы — с железной
   // Золото (тоже с железной киркой) сразу чеканят в монеты: 10 монет за руду.
   if ((T.miner ?? 0) >= 3) {
-    const t = (off.frac.gold ?? 0) + blocks * 0.003;
+    // Шахта в золотом слое (когда нужны монеты) — золота вдвое больше.
+    const t = (off.frac.gold ?? 0) + blocks * 0.003 * ((civ.goldRush ?? 0) > S.clock ? 2 : 1);
     const ore = Math.floor(t);
     off.frac.gold = t - ore;
     civ.coins = (civ.coins ?? 0) + ore * COINS_PER_GOLD;

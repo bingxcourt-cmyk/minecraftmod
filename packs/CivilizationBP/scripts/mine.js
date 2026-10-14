@@ -128,8 +128,8 @@ const isOre = (id) => strip(id).endsWith("_ore");
 const isCoalOre = (id) => id === "minecraft:coal_ore" || id === "minecraft:deepslate_coal_ore";
 const isDiamondOre = (id) => id === "minecraft:diamond_ore" || id === "minecraft:deepslate_diamond_ore";
 const isGoldOre = (id) => id === "minecraft:gold_ore" || id === "minecraft:deepslate_gold_ore";
-// Монеты чеканят из золота: одна золотая руда = 10 монет в казну. Других источников денег в мире нет.
-export const COINS_PER_GOLD = 10;
+// Монеты чеканят из золота: одна золотая руда = 100 монет в казну. Других источников денег в мире нет.
+export const COINS_PER_GOLD = 100;
 
 function yieldOf(civ, id, tier, deep) {
   // Как у Стива: железо — каменной киркой и лучше, алмазы — железной и лучше.

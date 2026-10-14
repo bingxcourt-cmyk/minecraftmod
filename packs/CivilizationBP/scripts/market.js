@@ -4,6 +4,8 @@ import { ERAS, popOf, missingQueue } from "./society.js";
 import { remainingCost, foodCap } from "./workers.js";
 import { note } from "./journal.js";
 import { money, fmtCoins, transfer, MIN_PRICE } from "./money.js";
+import { COINS_PER_GOLD } from "./mine.js";
+import { RATE } from "./offscreen.js";
 import { wallLeft, WALL_STONE } from "./walls.js";
 import { glassGoal } from "./industry.js";
 import { has, START_COINS } from "./society.js";
@@ -84,6 +86,80 @@ function post(civ, k, qty) {
   lot.qty += qty;
   lot.price = Math.min(lot.price, ask);
   return qty;
+}
+
+// ---------- Где взять монеты ----------
+// Налог: каждый житель приносит казне 0.5 монеты в минуту.
+export const TAX_PER_MIN = 0.5;
+export function taxTick(civ, minutes) {
+  const pop = popOf(civ);
+  if (pop > 0) civ.coins = money((civ.coins ?? 0) + pop * TAX_PER_MIN * minutes);
+}
+
+/** Важность покупки: чем больше, тем раньше на неё тратят монеты. */
+function priorityOf(civ, k) {
+  if (k === "food" && civ.starving) return 100;
+  if ((civ.upkeep?.debt?.[k] ?? 0) > 0) return 80;
+  const map = { дерево: "wood", камень: "stone", железо: "iron", еда: "food", стекло: "glass", песок: "sand", земля: "dirt" };
+  if (map[civ.waiting] === k) return 60;
+  if (k === "saplings") return 50;
+  if (k === "stone" || k === "iron") return 40;
+  if (k === "coal") return 30;
+  return 20;
+}
+
+/** Сколько монет в минуту приносит один шахтёр на золоте (железная кирка, по формуле фоновой добычи). */
+const goldPerMinerMin = () => RATE.blocks(0.7) * RATE.eff * 0.003 * 2 * COINS_PER_GOLD;
+
+/**
+ * Монет не хватает на всё нужное — поселение решает, что выгоднее прямо сейчас:
+ * продать излишки, на которые есть спрос (их купят быстро и по рыночной цене),
+ * и/или отправить шахтёров за золотом (если есть железная кирка). Решение — в журнале.
+ */
+function planCoins(civ, need, spare, deals) {
+  let cost = 0;
+  for (const k of Object.keys(need)) if (need[k] > 0 && stockOf(k) > 0) cost += price(k) * Math.min(need[k], stockOf(k));
+  const gap = money(cost - (civ.coins ?? 0));
+  if (gap <= 0) {
+    if (civ.coinPlan) civ.coinPlan = "";
+    return;
+  }
+  // Спрос на каждый товар — сколько его не смогли купить другие поселения.
+  const demand = {};
+  for (const o of S.civs.values()) if (o !== civ) for (const [k, v] of Object.entries(o.unmet ?? {})) demand[k] = (demand[k] ?? 0) + v;
+  const offers = Object.keys(spare)
+    .filter((r) => spare[r] > 0 && !need[r])
+    .map((r) => ({ r, q: Math.min(spare[r], CAP[r], Math.max(demand[r] ?? 0, 0)), all: Math.min(spare[r], CAP[r]) }))
+    .map((o) => ({ ...o, income: o.q * price(o.r) }))
+    .sort((a, b) => b.income - a.income);
+  let sellIncome = 0;
+  const sold = [];
+  for (const o of offers) {
+    if (sellIncome >= gap) break;
+    const q = post(civ, o.r, o.q > 0 ? o.q : o.all);
+    if (q > 0) {
+      spare[o.r] -= q;
+      sellIncome += o.q > 0 ? q * price(o.r) : 0;
+      sold.push(`${q} ${GOOD_NAME[o.r]}`);
+    }
+  }
+  if (sold.length) deals.push(`выставили на продажу ${sold.join(", ")}`);
+  // Продажей не закрыть — выгоднее ли золото? (нужна железная кирка)
+  const gold = (civ.census?.tiers?.miner ?? 0) >= 3 ? goldPerMinerMin() * 2 : 0;
+  const left = gap - sellIncome;
+  let plan;
+  if (left > 0 && gold > 0) {
+    civ.goldRush = S.clock + 600;
+    plan = `не хватает ${fmtCoins(gap)} мон.: продажа излишков даст ~${fmtCoins(money(sellIncome))}, остальное выгоднее добыть золотом — 2 шахтёра идут за золотом (~${Math.round(gold)} мон./мин)`;
+  } else if (left > 0) {
+    plan = `не хватает ${fmtCoins(gap)} мон.: продажа излишков даст ~${fmtCoins(money(sellIncome))}, золото пока недоступно (нужна железная кирка) — копят налогами`;
+  } else plan = `не хватает ${fmtCoins(gap)} мон.: выгоднее продать излишки (${sold.join(", ")})`;
+  const key = plan.replace(/[0-9.~]+/g, "");
+  if (civ.coinPlanKey !== key) {
+    civ.coinPlanKey = key;
+    note("market", `${civ.name}: ${plan}`);
+  }
+  civ.coinPlan = plan;
 }
 
 /** Купить у самых дешёвых продавцов. */
@@ -216,6 +292,7 @@ export function marketTick() {
       deals.push(`получили ${q} саженцев из социального фонда бесплатно (в фонде осталось ${S.market.social})`);
     }
     // Свой лот с товаром, который теперь нужен самим, — снимают с продажи.
+    // (ниже — план, где взять монеты, если их не хватает на всё нужное)
     for (const l of S.market.lots) {
       if (l.civ !== civ.id || !(need[l.k] > 0) || l.qty <= 0) continue;
       const q = Math.min(l.qty, need[l.k]);
@@ -223,20 +300,11 @@ export function marketTick() {
       civ.res[l.k] = (civ.res[l.k] ?? 0) + q;
       need[l.k] -= q;
     }
-    for (const k of Object.keys(need)) {
+    planCoins(civ, need, spare, deals);
+    // Покупают по важности: еда при голоде, долг по содержанию, стройка, новая эпоха, остальное.
+    for (const k of Object.keys(need).sort((a, b) => priorityOf(civ, b) - priorityOf(civ, a))) {
       if (need[k] <= 0) continue;
       const cost = Math.ceil(price(k) * need[k]);
-      // Денег не хватает: выставляют свои излишки (самое дорогое — первым), монеты придут, когда купят.
-      if (civ.coins < cost) {
-        for (const r of Object.keys(spare).sort((a, b) => spare[b] * price(b) - spare[a] * price(a))) {
-          if (r === k || need[r]) continue;
-          const q = post(civ, r, Math.min(spare[r], CAP[r]));
-          if (q > 0) {
-            spare[r] -= q;
-            deals.push(`выставили на продажу ${q} ${GOOD_NAME[r]}`);
-          }
-        }
-      }
       // Колонии без денег помогает метрополия: переселенцы возвращаются за ресурсами.
       const parent = civ.parent ? S.civs.get(civ.parent) : undefined;
       if (civ.coins < cost && parent && (parent.coins ?? 0) > cost && (k === "saplings" || k === "food")) {
