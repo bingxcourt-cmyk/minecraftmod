@@ -253,7 +253,9 @@ function needsOf(civ) {
 
 /** Что можно продать, не урезая собственные нужды. */
 function spareOf(civ) {
-  const rc = remainingCost(civ);
+  const rc = { ...remainingCost(civ) };
+  // В фоне между стройками проекта нет — бережём ресурсы на следующую постройку.
+  if (!civ.project && civ._nextCost) for (const k in civ._nextCost) rc[k] = Math.max(rc[k] ?? 0, civ._nextCost[k]);
   /** @type {{stone?: number, iron?: number}} */
   const next = ERAS[civ.era].next ?? {};
   const pop = popOf(civ);

@@ -4,7 +4,7 @@
     "name": "Цивилизации жителей — ресурсы",
     "description": "Инструменты в руках жителей.",
     "uuid": "70adc859-7dc7-40f5-bcaf-31c37bf98ca3",
-    "version": [4, 0, 1],
+    "version": [4, 0, 2],
     "min_engine_version": [
       1,
       21,
@@ -15,7 +15,7 @@
     {
       "type": "resources",
       "uuid": "0b0a305c-002e-4fd6-8ced-59e434e417cd",
-      "version": [4, 0, 1]
+      "version": [4, 0, 2]
     }
   ]
 }
