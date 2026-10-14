@@ -142,8 +142,8 @@ function yieldOf(civ, id, tier, deep) {
   } else if (isDiamondOre(id)) {
     if (tier >= 3) civ.res.diamond = (civ.res.diamond ?? 0) + 1;
   } else if (isGoldOre(id)) {
-    // Золото, как у Стива, — только железной киркой и лучше.
-    if (tier >= 3) {
+    // Золото — каменной киркой и лучше (в обычном Minecraft нужна железная, здесь облегчено).
+    if (tier >= 2) {
       civ.coins = (civ.coins ?? 0) + COINS_PER_GOLD;
       civ.minted = (civ.minted ?? 0) + COINS_PER_GOLD;
     } else civ.res.stone += 1;

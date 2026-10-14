@@ -108,13 +108,13 @@ function priorityOf(civ, k) {
   return 20;
 }
 
-/** Сколько монет в минуту приносит один шахтёр на золоте (железная кирка, по формуле фоновой добычи). */
-const goldPerMinerMin = () => RATE.blocks(0.7) * RATE.eff * 0.003 * 2 * COINS_PER_GOLD;
+/** Сколько монет в минуту приносит один шахтёр на золоте (каменная кирка, по формуле фоновой добычи). */
+const goldPerMinerMin = () => RATE.blocks(1) * RATE.eff * 0.003 * 2 * COINS_PER_GOLD;
 
 /**
  * Монет не хватает на всё нужное — поселение решает, что выгоднее прямо сейчас:
  * продать излишки, на которые есть спрос (их купят быстро и по рыночной цене),
- * и/или отправить шахтёров за золотом (если есть железная кирка). Решение — в журнале.
+ * и/или отправить шахтёров за золотом (если есть каменная кирка). Решение — в журнале.
  */
 function planCoins(civ, need, spare, deals) {
   let cost = 0;
@@ -144,15 +144,15 @@ function planCoins(civ, need, spare, deals) {
     }
   }
   if (sold.length) deals.push(`выставили на продажу ${sold.join(", ")}`);
-  // Продажей не закрыть — выгоднее ли золото? (нужна железная кирка)
-  const gold = (civ.census?.tiers?.miner ?? 0) >= 3 ? goldPerMinerMin() * 2 : 0;
+  // Продажей не закрыть — выгоднее ли золото? (нужна каменная кирка)
+  const gold = (civ.census?.tiers?.miner ?? 0) >= 2 ? goldPerMinerMin() * 2 : 0;
   const left = gap - sellIncome;
   let plan;
   if (left > 0 && gold > 0) {
     civ.goldRush = S.clock + 600;
     plan = `не хватает ${fmtCoins(gap)} мон.: продажа излишков даст ~${fmtCoins(money(sellIncome))}, остальное выгоднее добыть золотом — 2 шахтёра идут за золотом (~${Math.round(gold)} мон./мин)`;
   } else if (left > 0) {
-    plan = `не хватает ${fmtCoins(gap)} мон.: продажа излишков даст ~${fmtCoins(money(sellIncome))}, золото пока недоступно (нужна железная кирка) — копят налогами`;
+    plan = `не хватает ${fmtCoins(gap)} мон.: продажа излишков даст ~${fmtCoins(money(sellIncome))}, золото пока недоступно (нужна каменная кирка) — копят налогами`;
   } else plan = `не хватает ${fmtCoins(gap)} мон.: выгоднее продать излишки (${sold.join(", ")})`;
   const key = plan.replace(/[0-9.~]+/g, "");
   if (civ.coinPlanKey !== key) {

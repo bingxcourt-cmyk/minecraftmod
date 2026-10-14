@@ -142,8 +142,8 @@ export function offscreenTick(civ, dt) {
   gain(civ, off, "coal", blocks * 0.015);
   if ((T.miner ?? 0) >= 2) gain(civ, off, "iron", blocks * 0.008); // железо — с каменной кирки
   if ((T.miner ?? 0) >= 3) gain(civ, off, "diamond", blocks * 0.0006); // алмазы — с железной
-  // Золото (тоже с железной киркой) сразу чеканят в монеты: 10 монет за руду.
-  if ((T.miner ?? 0) >= 3) {
+  // Золото (с каменной киркой и лучше) сразу чеканят в монеты: 100 монет за руду.
+  if ((T.miner ?? 0) >= 2) {
     // Шахта в золотом слое (когда нужны монеты) — золота вдвое больше.
     const t = (off.frac.gold ?? 0) + blocks * 0.003 * ((civ.goldRush ?? 0) > S.clock ? 2 : 1);
     const ore = Math.floor(t);
