@@ -149,7 +149,7 @@ export function assignRoles(civ) {
     adults.push(e);
   }
   const n = adults.length;
-  const want = { soldier: 0, guard: 0, builder: 0, farmer: 0, hunter: 0, miner: 0, sander: 0, digger: 0, lumberjack: 0 };
+  const want = { soldier: 0, guard: 0, builder: 0, farmer: 0, hunter: 0, miner: 0, quarry: 0, sander: 0, digger: 0, lumberjack: 0 };
   let left = n;
   const give = (role, k) => {
     const g = Math.max(0, Math.min(k, left));
@@ -164,9 +164,11 @@ export function assignRoles(civ) {
   if (n >= 4) give("guard", Math.max(1, Math.floor(n / 8)) + (threats ? Math.min(threats * 2, Math.floor(n * 0.3)) : 0));
   const building = !!(civ.project || S.search.get(civ.id));
   if (building) give("builder", 1);
-  // Стройка стоит без ресурса — первым делом его добывают.
-  if (civ.waiting === "камень") give("miner", 1);
-  if (civ.waiting === "дерево") give("lumberjack", 1);
+  // Дефицит (стройка стоит без ресурса, голод или долг по содержанию) — до 40% жителей
+  // бросают на добычу именно этого ресурса.
+  const farmsNow = count(civ, (b) => b.t.startsWith("farm"));
+  const def = deficitOf(civ);
+  if (def && n >= 3) for (const [role, k] of Object.entries(deficitRoles(civ, def, n, farmsNow))) give(role, k);
   if (farms > 0) give("farmer", 1);
   if (farms === 0 || foodLow) give("hunter", 1);
   // Шахтёры нужны, пока не хватает камня или железа; остальные рубят лес.
@@ -210,6 +212,42 @@ export function assignRoles(civ) {
     }
   }
   for (const e of pool) setRole(e, brainOf(e, civ.id), "lumberjack", civ);
+}
+
+// ---------- Дефицит ----------
+const RES_BY_RU = { дерево: "wood", камень: "stone", железо: "iron", еда: "food", стекло: "glass", песок: "sand", земля: "dirt", андезит: "andesite" };
+
+/** Самый острый дефицит: голод, ресурс, без которого стоит стройка, или самый крупный долг по содержанию. */
+export function deficitOf(civ) {
+  let res = null;
+  if (civ.starving) res = "food";
+  else if (RES_BY_RU[civ.waiting]) res = RES_BY_RU[civ.waiting];
+  else {
+    const debt = Object.entries(civ.upkeep?.debt ?? {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1])[0];
+    if (debt) res = debt[0];
+  }
+  // Память на 2 минуты: пара принесённых блоков не должна сразу разгонять добытчиков обратно —
+  // иначе через минуту снова дефицит, и жители мечутся между работами.
+  if (res) {
+    civ._def = { res, until: S.clock + 120 };
+    return res;
+  }
+  return civ._def && civ._def.until > S.clock ? civ._def.res : null;
+}
+
+/** Сколько жителей и на какие работы бросить при дефиците ресурса (до 40% жителей, минимум 2). */
+export function deficitRoles(civ, res, n, farms) {
+  const k = Math.max(2, Math.round(n * 0.4));
+  switch (res) {
+    case "wood": return { lumberjack: k };
+    case "stone": return (civ.noStone ?? 0) > S.clock ? { miner: Math.min(k, 3) } : { miner: Math.min(2, k), quarry: Math.max(0, k - 2) };
+    case "andesite": return { quarry: Math.max(1, k - 1), miner: 1 };
+    case "iron": case "coal": case "diamond": return { miner: Math.min(k, 4) };
+    case "food": return farms > 0 ? { farmer: Math.min(k, farms * 3), hunter: Math.max(1, k - farms * 3) } : { hunter: k };
+    case "dirt": return { digger: k };
+    case "sand": case "glass": return { sander: k };
+    default: return {};
+  }
 }
 
 // ---------- Голод ----------

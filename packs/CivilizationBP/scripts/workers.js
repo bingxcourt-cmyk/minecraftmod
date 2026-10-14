@@ -11,11 +11,11 @@ import { guardThink, armorOf, ARMOR_NAME } from "./defense.js";
 import { ERAS } from "./society.js";
 import { TOOL_FOR, TIERS, toolLabel, craftNeed, craft, useTool } from "./tools.js";
 import { note } from "./journal.js";
-import { sanderThink, diggerThink } from "./industry.js";
+import { sanderThink, diggerThink, quarryThink } from "./industry.js";
 
 export const ROLE_NAME = {
   lumberjack: "Лесоруб", miner: "Шахтёр", farmer: "Фермер", hunter: "Охотник", builder: "Строитель",
-  soldier: "Воин", guard: "Стражник", sander: "Песочник", digger: "Землекоп", raider: "Бандит", settler: "Переселенец", child: "Ребёнок", golem: "Страж", "": "Житель",
+  soldier: "Воин", guard: "Стражник", sander: "Песочник", digger: "Землекоп", quarry: "Каменотёс", raider: "Бандит", settler: "Переселенец", child: "Ребёнок", golem: "Страж", "": "Житель",
 };
 
 // ---------- Мозг жителя ----------
@@ -874,6 +874,7 @@ export function think(civ, ent, brain, tick, hooks) {
     case "settler": return hooks.settler(civ, ent, brain, tick);
     case "sander": return sanderThink(civ, ent, brain, tick);
     case "digger": return diggerThink(civ, ent, brain, tick);
+    case "quarry": return quarryThink(civ, ent, brain, tick);
     case "child": return wander(civ, brain, 6);
     default: return wander(civ, brain, 8);
   }

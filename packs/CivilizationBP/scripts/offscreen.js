@@ -1,7 +1,7 @@
 import { S, DIM, loaded, playersNear, markDirty, personName, P, setProp } from "./core.js";
 import { TIERS, TOOL_FOR, toolTier, bestCraftable } from "./tools.js";
 import { TYPES, getBP } from "./blueprints.js";
-import { MAX_POP, popOf, housingOf, chooseNext, count, has, join, eraTick, noteBuilt, newCiv, MAX_CIVS, MAX_COLONIES } from "./society.js";
+import { MAX_POP, popOf, housingOf, chooseNext, count, has, join, eraTick, noteBuilt, newCiv, MAX_CIVS, MAX_COLONIES, deficitOf, deficitRoles } from "./society.js";
 import { findDrySpot } from "./blocks.js";
 import { brainOf, foodCap, remainingCost, RES_NAME } from "./workers.js";
 import { glassShort, smeltTick } from "./industry.js";
@@ -39,7 +39,7 @@ export const RATE = {
 
 /** Профессии в фоне — по тем же правилам, что и вживую, но от текущего населения. */
 function rolesFor(civ, n) {
-  const r = { soldier: 0, builder: 0, farmer: 0, hunter: 0, miner: 0, sander: 0, digger: 0, lumberjack: 0 };
+  const r = { soldier: 0, builder: 0, farmer: 0, hunter: 0, miner: 0, quarry: 0, sander: 0, digger: 0, lumberjack: 0 };
   let left = n;
   const give = (role, k) => {
     const g = Math.max(0, Math.min(k, left));
@@ -50,6 +50,9 @@ function rolesFor(civ, n) {
   const foodLow = civ.res.food < n * 3 + 5;
   if (civ.war && n >= 2) give("soldier", Math.max(1, Math.floor(n * 0.45)));
   give("builder", n >= 6 ? 2 : 1);
+  // Дефицит — как вживую: до 40% жителей на добычу нужного ресурса.
+  const def = deficitOf(civ);
+  if (def && n >= 3) for (const [role, k] of Object.entries(deficitRoles(civ, def, n, farms))) give(role, k);
   if ((civ.res.dirt ?? 0) < 30 && n >= 3) give("digger", n >= 10 ? 2 : 1);
   if (farms > 0) give("farmer", Math.min(farms * 2, Math.round(n * 0.25) + (foodLow ? 1 : 0)));
   if (farms === 0 || foodLow) give("hunter", 1);
@@ -151,6 +154,8 @@ export function offscreenTick(civ, dt) {
     civ.coins = (civ.coins ?? 0) + ore * COINS_PER_GOLD;
     civ.minted = (civ.minted ?? 0) + ore * COINS_PER_GOLD;
   }
+  // Каменотёсы ломают камень на поверхности: ~30 блоков в минуту.
+  gain(civ, off, "stone", (R.quarry ?? 0) * 30 * RATE.eff * k);
   // Песок копают руками (лопат у жителей нет): ~40 блоков в минуту.
   gain(civ, off, "sand", (R.sander ?? 0) * 40 * RATE.eff * k);
   // Земля: землекопы (~40 в минуту) и то, что срезают при выравнивании и проходке шахты.

@@ -46,7 +46,11 @@ export function smeltTick(civ, minutes) {
 // Что и как копают: песочники — песок (до 4 блоков вглубь), землекопы — землю (до 2 блоков,
 // чтобы не оставлять ям), не ближе 3 блоков к постройкам и не внутри стены.
 const DIRT = new Set(["minecraft:dirt", "minecraft:grass_block", "minecraft:coarse_dirt", "minecraft:podzol", "minecraft:rooted_dirt"]);
+// Каменотёсы ломают камень на поверхности (скалы, склоны), когда камня не хватает.
+const STONE = new Set(["minecraft:stone", "minecraft:andesite", "minecraft:diorite", "minecraft:granite", "minecraft:cobblestone", "minecraft:tuff", "minecraft:deepslate"]);
+const STONE_RES = { "minecraft:andesite": "andesite" };
 const DIG = {
+  stone: { ids: STONE, spot: "stoneAt", none: "noStone", depth: 3, minR: 12, found: "каменотёсы нашли выход камня", res: (id) => STONE_RES[id] ?? "stone" },
   sand: { ids: SAND, spot: "sandAt", none: "noSand", depth: 4, minR: 16, found: "песочники нашли песок" },
   dirt: { ids: DIRT, spot: "dirtAt", none: "noDirt", depth: 2, minR: 14, found: "землекопы нашли место, где брать землю" },
 };
@@ -136,9 +140,10 @@ function digThink(key, civ, ent, brain, tick) {
     try {
       b.setType("minecraft:air");
     } catch {}
-    civ.res[key] = (civ.res[key] ?? 0) + 1;
+    const rk = cfg.res ? cfg.res(b.typeId) : key;
+    civ.res[rk] = (civ.res[rk] ?? 0) + 1;
     markDirty(civ);
-    sound(dim, key === "sand" ? "dig.sand" : "dig.grass", d);
+    sound(dim, key === "sand" ? "dig.sand" : key === "stone" ? "dig.stone" : "dig.grass", d);
     particle(dim, "minecraft:basic_smoke_particle", { x: d.x + 0.5, y: d.y + 0.8, z: d.z + 0.5 });
     const flag = key + "Noted";
     if (!civ[flag]) {
@@ -162,5 +167,7 @@ function digThink(key, civ, ent, brain, tick) {
 
 /** Песочник: копает песок для стекла. */
 export const sanderThink = (civ, ent, brain, tick) => digThink("sand", civ, ent, brain, tick);
+/** Каменотёс: ломает камень на поверхности. */
+export const quarryThink = (civ, ent, brain, tick) => digThink("stone", civ, ent, brain, tick);
 /** Землекоп: копает землю для выравнивания площадок. */
 export const diggerThink = (civ, ent, brain, tick) => digThink("dirt", civ, ent, brain, tick);
