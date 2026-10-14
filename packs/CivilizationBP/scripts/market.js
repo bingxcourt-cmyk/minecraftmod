@@ -15,15 +15,19 @@ export const BASE = { wood: 1, stone: 1, andesite: 1.5, food: 2, coal: 4, saplin
 const TARGET = { wood: 600, stone: 600, andesite: 300, food: 300, coal: 120, saplings: 30, sand: 400, glass: 300, iron: 30, diamond: 4 };
 const CAP = { wood: 200, stone: 200, andesite: 120, food: 80, coal: 20, saplings: 10, sand: 128, glass: 160, iron: 10, diamond: 2 };
 export const GOOD_NAME = { wood: "дерево", stone: "камень", andesite: "андезит", food: "еда", coal: "уголь", saplings: "саженцы", sand: "песок", glass: "стекло", iron: "железо", diamond: "алмазы" };
-const BID = 0.8; // рынок покупает дешевле, чем продаёт (его доля)
+const BID = 0.8;
+const SOCIAL_SAPLINGS = 20; // бесплатных саженцев в фонде на весь мир
+const SOCIAL_PER_CIV = 4; // одному поселению — не больше 4 // рынок покупает дешевле, чем продаёт (его доля)
 
 export function loadMarket() {
   try {
     S.market = JSON.parse(String(world.getDynamicProperty("civ:market") ?? "null"));
   } catch {}
-  if (!S.market) S.market = { stock: Object.fromEntries(Object.keys(TARGET).map((k) => [k, Math.round(TARGET[k] / 2)])), prev: {} };
-  // Новые товары (песок, стекло) в старом сохранении.
-  for (const k of Object.keys(TARGET)) if (S.market.stock[k] === undefined) S.market.stock[k] = Math.round(TARGET[k] / 2);
+  // Торговцев со стороны нет: на рынке только то, что продали сами поселения. В новом мире рынок пуст.
+  if (!S.market) S.market = { stock: Object.fromEntries(Object.keys(TARGET).map((k) => [k, 0])), prev: {} };
+  for (const k of Object.keys(TARGET)) if (!Number.isFinite(S.market.stock[k])) S.market.stock[k] = 0;
+  // Социальный фонд: 20 бесплатных саженцев на весь мир, не пополняется.
+  if (S.market.social === undefined) S.market.social = SOCIAL_SAPLINGS;
 }
 
 export function saveMarket() {
@@ -147,6 +151,15 @@ export function marketTick() {
       for (const k in need) if (need[k] > 0) civ.unmet[k] = need[k];
       continue;
     }
+    // Нет леса — сначала бесплатные саженцы из социального фонда (по 4 на поселение, пока фонд не кончится).
+    if (need.saplings > 0 && (S.market.social ?? 0) > 0 && (civ.socialTaken ?? 0) < SOCIAL_PER_CIV) {
+      const q = Math.min(need.saplings, SOCIAL_PER_CIV - (civ.socialTaken ?? 0), S.market.social);
+      S.market.social -= q;
+      civ.socialTaken = (civ.socialTaken ?? 0) + q;
+      civ.res.saplings = (civ.res.saplings ?? 0) + q;
+      need.saplings -= q;
+      deals.push(`получили ${q} саженцев из социального фонда бесплатно (в фонде осталось ${S.market.social})`);
+    }
     for (const k of Object.keys(need)) {
       if (need[k] <= 0) continue;
       const cost = Math.ceil(price(k) * need[k]);
@@ -199,11 +212,6 @@ export function marketTick() {
     }
     markDirty(civ);
   }
-  // Рынок понемногу сам пополняется/расходует запасы (торговцы со стороны) — цены не застывают.
-  for (const k of Object.keys(TARGET)) {
-    const st = Number.isFinite(S.market.stock[k]) ? S.market.stock[k] : TARGET[k] / 2;
-    S.market.stock[k] = st + (TARGET[k] / 2 - st) * 0.06;
-  }
   saveMarket();
 }
 
@@ -229,6 +237,8 @@ export function marketText() {
     const arrow = p > prev * 1.01 ? "§cдорожает" : p < prev * 0.99 ? "§aдешевеет" : "";
     lines.push(`${GOOD_NAME[k]}: §e${p < 1 ? p.toFixed(2) : p < 10 ? p.toFixed(1) : Math.round(p)}§r ${arrow}§r  §8(на рынке ${Math.floor(S.market.stock[k] ?? 0)})`);
   }
+  lines.push(`§8Торговцев со стороны нет: товар появляется, только когда его продаст поселение.§r`);
+  lines.push(`Социальный фонд саженцев: §e${S.market.social ?? 0}§r (бесплатно, по ${SOCIAL_PER_CIV} на поселение)`);
   lines.push("", "§lКазна поселений:§r");
   for (const c of S.civs.values()) lines.push(`${c.color}${c.name}§r: ${Math.floor(c.coins ?? 0)} мон.`);
   return lines.join("\n");
