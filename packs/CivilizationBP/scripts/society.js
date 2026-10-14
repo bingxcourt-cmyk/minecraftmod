@@ -3,7 +3,7 @@ import {
   S, P, DIM, getB, getProp, setProp, dXZ, rnd, pick, markDirty, announce, sound, particle, loaded,
   civName, civColor, personName, deleteCiv, playersNear, isNight, levelOf,
 } from "./core.js";
-import { groundAt, standY, waterNear, findDrySpot, isPassableId } from "./blocks.js";
+import { groundAt, standY, waterNear, findDrySpot, isPassableId, seabed } from "./blocks.js";
 import { TYPES, getBP, dims, doorFront, toWorld } from "./blueprints.js";
 import { brainOf, setRole, updateTag, resetTask, remainingCost, fastBuild } from "./workers.js";
 import { findSafeSpot, safeTeleport } from "./nav.js";
@@ -440,34 +440,47 @@ function validate(civ, c, gap = 2) {
   let max = -1e9;
   let sum = 0;
   let cells = 0;
+  let water = -1e9; // уровень воды, если площадка (частично) на мелководье
   const hs = [];
   for (let x = 0; x < c.W; x++) for (let z = 0; z < c.D; z++) {
     // Своя стена не мешает: её здесь разберут и потом перестроят по новому контуру.
     if (civ.wall && isOwnWall(civ, c.x + x, c.z + z)) continue;
     const g = groundAt(dim, c.x + x, c.z + z);
-    if (!g || g.liquid || g.unnatural) return undefined;
-    min = Math.min(min, g.y);
-    max = Math.max(max, g.y);
-    sum += g.y;
-    hs.push(g.y);
+    if (!g || g.unnatural) return undefined;
+    let y = g.y;
+    if (g.liquid) {
+      // Мелководье (до 5 блоков) засыпают землёй — получается остров; глубже не строят.
+      const bed = seabed(dim, c.x + x, c.z + z, g.y);
+      if (bed === undefined || g.y - bed > 5) return undefined;
+      water = Math.max(water, g.y);
+      y = bed;
+    }
+    min = Math.min(min, y);
+    max = Math.max(max, y);
+    sum += y;
+    hs.push(y);
     cells++;
   }
   if (!cells) return undefined;
   // Все постройки — на уровне поселения: площадку выравнивают (подсыпают землёй или камнем,
   // лишнее срезают). Слишком глубокий овраг или крутой холм — место не подходит.
   const center = c.t === "center" || !civ.buildings.some((b) => b.t === "center");
-  const base = center ? Math.round(sum / cells) : levelOf(civ);
-  if (center && max - min > 4) return undefined;
-  if (!center && (min < base - 6 || max > base + 5)) return undefined;
+  let base = center ? Math.round(sum / cells) : levelOf(civ);
+  // Остров насыпают до уровня воды: пол постройки — не ниже её поверхности (он заменяет верхний
+  // слой воды), всё под полом засыпают землёй, комнаты — над водой.
+  if (center && water > -1e9) base = Math.max(base, water);
+  if (water > -1e9 && base < water) return undefined;
+  if (center && water <= -1e9 && max - min > 4) return undefined;
+  if (min < base - 7 || max > base + 5) return undefined;
   // Высокая постройка не должна упираться в потолок мира (иначе стройка никогда не закончится).
   if (base + dims(c.t, c.r).H + 3 > 319) return undefined;
   let fill = 0;
   for (const y of hs) fill += Math.max(0, base - 1 - y);
-  // Рядом с водой не строим: выровняют площадку ниже уровня воды — и всё затопит.
+  // Вода рядом опасна, только если пол окажется не выше неё — тогда площадку затопит.
   for (let x = -2; x <= c.W + 1; x++) for (let z = -2; z <= c.D + 1; z++) {
     if (x >= 0 && x < c.W && z >= 0 && z < c.D) continue;
     const g = groundAt(dim, c.x + x, c.z + z);
-    if (g?.liquid) return undefined;
+    if (g?.liquid && g.y > base) return undefined;
   }
   return { base, max, fill };
 }

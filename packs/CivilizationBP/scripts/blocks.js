@@ -80,6 +80,20 @@ export function isProtected(id) {
   return UNBREAKABLE.has(n) || n.includes("chest") || n.includes("shulker") || n === "barrel";
 }
 
+const UNDERWATER = new Set(["kelp", "kelp_plant", "seagrass", "tall_seagrass", "sea_pickle", "bubble_column"]);
+
+/** Дно под водой: первая твёрдая клетка ниже поверхности воды (не глубже 12). */
+export function seabed(dim, x, z, ySurf) {
+  for (let y = ySurf; y > ySurf - 12; y--) {
+    const b = getB(dim, x, y, z);
+    if (!b) return undefined;
+    const id = b.typeId;
+    if (b.isLiquid || b.isAir || id.includes("water") || UNDERWATER.has(strip(id)) || isPassableId(id) || b.isWaterlogged) continue;
+    return isNatural(id) ? y : undefined;
+  }
+  return undefined;
+}
+
 /**
  * Находит уровень земли в столбце: самый верхний твёрдый природный блок.
  * Возвращает { y, liquid, unnatural } или undefined, если чанк не загружен.
@@ -98,7 +112,8 @@ export function groundAt(dim, x, z) {
     const b = getB(dim, x, y, z);
     if (!b) return undefined;
     const id = b.typeId;
-    if (b.isLiquid || id.includes("water") || id.includes("lava")) return { y, liquid: true, unnatural };
+    // Водоросли, морская трава и прочее подводное — тоже вода (иначе морское дно казалось бы сушей).
+    if (b.isLiquid || id.includes("water") || id.includes("lava") || UNDERWATER.has(strip(id)) || b.isWaterlogged) return { y, liquid: true, unnatural };
     if (b.isAir || isPassableId(id) || isLeaves(id) || isLog(id) || SOFT.has(strip(id))) {
       if (!isNatural(id)) unnatural = true;
       continue;
