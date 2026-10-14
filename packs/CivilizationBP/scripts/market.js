@@ -18,6 +18,8 @@ export const BASE = { wood: 1, stone: 1, dirt: 0.5, andesite: 1.5, food: 2, coal
 const CAP = { wood: 200, stone: 200, dirt: 200, andesite: 120, food: 80, coal: 20, saplings: 10, sand: 128, glass: 160, iron: 10, diamond: 2 };
 const LOT_MAX = { wood: 600, stone: 600, dirt: 600, andesite: 300, food: 200, coal: 100, saplings: 40, sand: 400, glass: 400, iron: 40, diamond: 8 };
 export const GOOD_NAME = { wood: "дерево", stone: "камень", dirt: "земля", andesite: "андезит", food: "еда", coal: "уголь", saplings: "саженцы", sand: "песок", glass: "стекло", iron: "железо", diamond: "алмазы" };
+// С какого излишка (сверх своих нужд) товар выставляют на продажу.
+const SELL_FROM = { food: 10, wood: 60, stone: 60, dirt: 60, andesite: 30, coal: 10, saplings: 8, sand: 40, glass: 40, iron: 8, diamond: 2 };
 const SOCIAL_SAPLINGS = 20; // бесплатных саженцев в фонде на весь мир
 const SOCIAL_PER_CIV = 4; // одному поселению — не больше 4
 
@@ -254,11 +256,12 @@ export function marketTick() {
         else S.market.last[k] = Math.min(BASE[k] * 5, (S.market.last[k] ?? BASE[k]) * 1.05);
       }
     }
-    // Склады ломятся — выставляют часть излишков (кроме камня, нужного на стену).
-    for (const k of ["wood", "stone", "dirt", "andesite", "food", "sand", "glass", "iron", "coal"]) {
+    // Излишки сверх своего запаса выставляют на продажу (кроме камня, пока строится стена).
+    // Порог небольшой: еду, например, продают, как только её больше, чем нужно своим на 4 приёма.
+    for (const k of Object.keys(SELL_FROM)) {
       if (k === "stone" && wallLeft(civ) > 0) continue;
-      if (spare[k] > (k === "iron" || k === "coal" ? 40 : 400)) {
-        const q = post(civ, k, Math.min(CAP[k], Math.floor(spare[k] / 6)));
+      if (spare[k] >= SELL_FROM[k]) {
+        const q = post(civ, k, Math.min(CAP[k], Math.ceil(spare[k] / 2)));
         if (q > 0) deals.push(`выставили излишки: ${q} ${GOOD_NAME[k]}`);
       }
     }

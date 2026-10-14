@@ -2,16 +2,20 @@ import { world, system } from "@minecraft/server";
 import { S, DIM, getB, loaded, markDirty, dXZ, levelOf } from "./core.js";
 import { groundAt, isPassableId, isNatural, findDrySpot } from "./blocks.js";
 import { remainingCost, digYield } from "./workers.js";
-import { roadGate, setRoadGates, wallShare, wallPaidShare } from "./walls.js";
+import { setRoadGates, sideGate, SIDE_DIR, isOwnWall } from "./walls.js";
 import { findSafeSpot } from "./nav.js";
 import { deferLight } from "./lights.js";
 import { note } from "./journal.js";
 
 // ---------- Дороги между поселениями ----------
-// С эпохи «Деревня» поселение прокладывает дорогу к ближайшему соседу и к своей метрополии.
-// Дорога ложится по кусочкам там, где чанки загружены, и её видно, пока вы путешествуете.
+// У поселения не больше 4 дорог — по одной на каждую сторону света (север, юг, запад, восток).
+// Дорога выходит из ворот стены на этой стороне (а пока стены нет — от края поселения),
+// идёт прямыми участками под прямым углом и приходит к воротам соседа на противоположной стороне.
+// Дорога ложится по кусочкам там, где чанки загружены; работяги постоянно её подправляют,
+// а старые кривые дороги разбирают.
 const ROAD_MAX = 320; // дальше дорог не строят
-const ROAD_SKIP = 5; // у центров дорогу не кладём — там своя площадка
+const ROAD_SKIP = 0;
+const OPP = { E: "W", W: "E", S: "N", N: "S" };
 
 export function loadRoads() {
   try {
@@ -19,86 +23,172 @@ export function loadRoads() {
   } catch {
     S.roads = [];
   }
+  try {
+    S.roadDemo = JSON.parse(String(world.getDynamicProperty("civ:rdemo") ?? "[]"));
+  } catch {
+    S.roadDemo = [];
+  }
 }
 
 export function saveRoads() {
   try {
     world.setDynamicProperty("civ:roads", JSON.stringify(S.roads ?? []));
+    world.setDynamicProperty("civ:rdemo", JSON.stringify((S.roadDemo ?? []).slice(-50)));
   } catch {}
 }
 
-const placedShare = (r) => (r.done.split("1").length - 1) / r.done.length;
 export const roadBetween = (a, b) => (S.roads ?? []).find((r) => (r.a === a.id && r.b === b.id) || (r.a === b.id && r.b === a.id));
 
-/**
- * Концы дороги: если у поселения есть стена — точка сразу за воротами (ближайший к соседу столб
- * становится воротами), иначе — центр поселения. Высота — уровень поселения.
- */
-function endOf(civ, other) {
-  const y = levelOf(civ);
-  if (civ.wall && wallShare(civ) + wallPaidShare(civ) > 0) {
-    const g = roadGate(civ, other.center);
-    if (g) return { x: g.x, z: g.z, y, skip: 0, key: g.key };
+/** С какой стороны света от a находится b. */
+function sideTo(a, b) {
+  const dx = b.center.x - a.center.x;
+  const dz = b.center.z - a.center.z;
+  return Math.abs(dx) >= Math.abs(dz) ? (dx > 0 ? "E" : "W") : dz > 0 ? "S" : "N";
+}
+
+/** Стороны, уже занятые дорогами этого поселения. */
+function usedSides(civ, except) {
+  const out = new Set();
+  for (const r of S.roads ?? []) {
+    if (r === except) continue;
+    if (r.a === civ.id && r.sa) out.add(r.sa);
+    if (r.b === civ.id && r.sb) out.add(r.sb);
   }
-  return { x: Math.floor(civ.center.x), z: Math.floor(civ.center.z), y, skip: ROAD_SKIP };
+  return out;
+}
+
+/** Выход дороги: за воротами стены на этой стороне, а без стены — у края поселения. */
+function exitOf(civ, side) {
+  const y = levelOf(civ);
+  const g = sideGate(civ, side);
+  if (g) return { ...g, y };
+  const [dx, dz] = SIDE_DIR[side];
+  const cx = Math.floor(civ.center.x);
+  const cz = Math.floor(civ.center.z);
+  let far = 6;
+  for (const b of civ.buildings) {
+    if (b.t === "mine" || b.t === "quarry") continue;
+    far = Math.max(far, dx > 0 ? b.x + b.w - cx : dx < 0 ? cx - b.x : dz > 0 ? b.z + b.d - cz : cz - b.z);
+  }
+  return { x: cx + dx * (far + 3), z: cz + dz * (far + 3), y };
+}
+
+/** Ломаная из прямых участков: выход A → поворот посередине → выход B. */
+function route(A, B, side) {
+  const pts = [[A.x, A.z]];
+  if (side === "E" || side === "W") {
+    const mx = Math.round((A.x + B.x) / 2);
+    pts.push([mx, A.z], [mx, B.z]);
+  } else {
+    const mz = Math.round((A.z + B.z) / 2);
+    pts.push([A.x, mz], [B.x, mz]);
+  }
+  pts.push([B.x, B.z]);
+  return pts.filter((p, i) => i === 0 || p[0] !== pts[i - 1][0] || p[1] !== pts[i - 1][1]);
+}
+
+const pathLen = (pts) => pts.slice(1).reduce((n, p, i) => n + Math.abs(p[0] - pts[i][0]) + Math.abs(p[1] - pts[i][1]), 0);
+
+/** Точка i вдоль дороги и поперечное направление в ней. */
+export function polyPoint(r, i) {
+  if (!r.pts) {
+    // Старая прямая дорога (до версии 2.7).
+    const n = r.done.length - 1;
+    const x = Math.round(r.x1 + ((r.x2 - r.x1) * i) / n);
+    const z = Math.round(r.z1 + ((r.z2 - r.z1) * i) / n);
+    const [px, pz] = Math.abs(r.x2 - r.x1) > Math.abs(r.z2 - r.z1) ? [0, 1] : [1, 0];
+    return { x, z, px, pz };
+  }
+  let left = i;
+  for (let k = 1; k < r.pts.length; k++) {
+    const [x0, z0] = r.pts[k - 1];
+    const [x1, z1] = r.pts[k];
+    const len = Math.abs(x1 - x0) + Math.abs(z1 - z0);
+    if (left <= len || k === r.pts.length - 1) {
+      const t = Math.min(left, len);
+      const sx = Math.sign(x1 - x0);
+      const sz = Math.sign(z1 - z0);
+      return { x: x0 + sx * t, z: z0 + sz * t, px: sx ? 0 : 1, pz: sx ? 1 : 0 };
+    }
+    left -= len;
+  }
+  const [x, z] = r.pts[r.pts.length - 1];
+  return { x, z, px: 1, pz: 0 };
+}
+
+/** Старую геометрию дороги — в очередь на разбор (разберут, когда чанки загрузятся). */
+function scrapGeometry(r) {
+  if (!r.done || !r.done.includes("1")) return;
+  S.roadDemo = S.roadDemo ?? [];
+  S.roadDemo.push({ pts: r.pts, x1: r.x1, z1: r.z1, x2: r.x2, z2: r.z2, n: r.done.length - 1, done: r.done, i: 0 });
 }
 
 /** Новая геометрия дороги (оплаченный прогресс сохраняется, участки перекладываются). */
 function shape(r, A, B) {
-  const n = Math.max(1, Math.ceil(Math.max(Math.abs(B.x - A.x), Math.abs(B.z - A.z))));
+  scrapGeometry(r);
+  const pts = route(A, B, r.sa);
+  const n = Math.max(1, pathLen(pts));
   const halfA = Math.ceil((n + 1) / 2);
   Object.assign(r, {
-    x1: A.x, z1: A.z, y1: A.y, x2: B.x, z2: B.z, y2: B.y, s1: A.skip, s2: B.skip,
-    done: "0".repeat(n + 1), cur: 0, v: 3,
+    pts, x1: A.x, z1: A.z, y1: A.y, x2: B.x, z2: B.z, y2: B.y, s1: ROAD_SKIP, s2: ROAD_SKIP,
+    done: "0".repeat(n + 1), cur: 0, fix: 0, v: 4,
     pa: Math.min(r.pa ?? 0, halfA), pb: Math.min(r.pb ?? 0, n + 1 - halfA),
   });
 }
 
-/** Раз в минуту: кто с кем строит дорогу; дороги идут от ворот до ворот и следуют за стенами. */
+/** Раз в минуту: кто с кем строит дорогу; дороги следуют за воротами стен. */
 export function planRoads() {
-  S.roads = S.roads ?? [];
+  S.roads = (S.roads ?? []).filter((r) => {
+    if (S.civs.has(r.a) && S.civs.has(r.b)) return true;
+    return false; // дорога к исчезнувшему поселению: уже положенное остаётся
+  });
+  // Старые дороги: назначаем стороны; если сторона уже занята — лишнюю (дальнюю) дорогу разбирают.
+  const byLen = [...S.roads].sort((p, q) => (p.done?.length ?? 0) - (q.done?.length ?? 0));
+  for (const r of byLen) {
+    if (r.sa && r.sb) continue;
+    const a = S.civs.get(r.a);
+    const b = S.civs.get(r.b);
+    const sa = sideTo(a, b);
+    const sb = OPP[sa];
+    if (usedSides(a, r).has(sa) || usedSides(b, r).has(sb)) {
+      scrapGeometry(r);
+      r.dead = true;
+      continue;
+    }
+    r.sa = sa;
+    r.sb = sb;
+  }
+  S.roads = S.roads.filter((r) => !r.dead);
   const civs = [...S.civs.values()];
   for (const civ of civs) {
     if (civ.era < 1) continue;
     const targets = [];
     const parent = civ.parent ? S.civs.get(civ.parent) : undefined;
     if (parent) targets.push(parent);
-    let nearest;
-    let bd = ROAD_MAX;
-    for (const o of civs) {
-      if (o === civ) continue;
-      const d = dXZ(o.center, civ.center);
-      if (d < bd) {
-        bd = d;
-        nearest = o;
-      }
-    }
-    if (nearest) targets.push(nearest);
+    for (const o of civs.filter((o) => o !== civ).sort((p, q) => dXZ(p.center, civ.center) - dXZ(q.center, civ.center))) targets.push(o);
     for (const o of targets) {
       if (roadBetween(civ, o) || dXZ(o.center, civ.center) > ROAD_MAX) continue;
-      const r = { a: civ.id, b: o.id, pa: 0, pb: 0 };
-      shape(r, endOf(civ, o), endOf(o, civ));
+      const sa = sideTo(civ, o);
+      const sb = OPP[sa];
+      // У каждого поселения — не больше одной дороги на сторону света (всего до 4).
+      if (usedSides(civ).has(sa) || usedSides(o).has(sb)) continue;
+      const r = { a: civ.id, b: o.id, sa, sb, pa: 0, pb: 0 };
+      shape(r, exitOf(civ, sa), exitOf(o, sb));
       S.roads.push(r);
       note("build", `${civ.name} и ${o.name} начали дорогу друг к другу (${r.done.length} блоков, каждый строит свою половину)`);
     }
   }
-  // Дороги к исчезнувшим поселениям доделывать не нужно — но уже положенное остаётся.
-  S.roads = S.roads.filter((r) => S.civs.has(r.a) && S.civs.has(r.b));
-  // Стена перестроилась (или поселение переехало) — дорогу ведут к новым воротам.
-  const gates = new Map();
+  // Стена перестроилась или ворота сдвинулись — дорогу ведут к новым воротам, старую разбирают.
   for (const r of S.roads) {
-    const a = S.civs.get(r.a);
-    const b = S.civs.get(r.b);
-    const A = endOf(a, b);
-    const B = endOf(b, a);
-    for (const [c, e] of [[a, A], [b, B]]) if (e.key) gates.set(c.id, [...(gates.get(c.id) ?? []), e.key]);
+    const A = exitOf(S.civs.get(r.a), r.sa);
+    const B = exitOf(S.civs.get(r.b), r.sb);
     const moved = Math.hypot(A.x - r.x1, A.z - r.z1) > 3 || Math.hypot(B.x - r.x2, B.z - r.z2) > 3 || A.y !== r.y1 || B.y !== r.y2;
-    if (r.v !== 3 || moved) shape(r, A, B);
+    if (r.v !== 4 || moved) shape(r, A, B);
   }
-  for (const civ of civs) setRoadGates(civ, gates.get(civ.id) ?? []);
+  // Ворота под дороги теперь — только по сторонам света.
+  for (const civ of civs) setRoadGates(civ, []);
   saveRoads();
 }
-
 // ---------- Укладка ----------
 // Дорога шириной 3: по центру каменный кирпич, по краям полированный андезит, по бокам заборы
 // (с проходами каждые 16 блоков), фонари на столбах каждые 12 блоков.
@@ -133,9 +223,7 @@ const CUTTABLE = (b) => !b.isAir && !b.isLiquid && (isNatural(b.typeId) || b.typ
 /** Кладёт поперечный срез дороги в точке i. false — чанк ещё не загружен. */
 function layRoadPoint(dim, r, i) {
   const n = r.done.length - 1;
-  const x = Math.round(r.x1 + ((r.x2 - r.x1) * i) / n);
-  const z = Math.round(r.z1 + ((r.z2 - r.z1) * i) / n);
-  const [px, pz] = Math.abs(r.x2 - r.x1) > Math.abs(r.z2 - r.z1) ? [0, 1] : [1, 0];
+  const { x, z, px, pz } = polyPoint(r, i);
   for (let o = -2; o <= 2; o++) if (!loaded(dim, { x: x + px * o, z: z + pz * o })) return false;
   const owner = S.civs.get(i <= n / 2 ? r.a : r.b);
   let y = roadHeight(r, i);
@@ -150,14 +238,17 @@ function layRoadPoint(dim, r, i) {
     const cz = z + pz * o;
     const g = groundAt(dim, cx, cz);
     if (!g) return false;
-    // Чужие постройки (не наша дорога и не наши опоры) не трогаем.
-    if (g.unnatural && g.y > y + 1) continue;
+    // Постройки и стены (свои и чужие) не трогаем; остатки старых дорог — перекладываем.
+    if (g.unnatural && g.y > y + 1 && (protectedColumn(cx, cz) || !ROAD_BLOCKS.has(getB(dim, cx, g.y, cz)?.typeId ?? ""))) continue;
     const edge = Math.abs(o) === 2;
     // Выемка: срезаем холм над дорогой (грунт — на склад того, чья это половина).
     for (let k = 1; k <= 5; k++) {
       const b = getB(dim, cx, y + k, cz);
       if (b && CUTTABLE(b)) {
         if (owner && !isPassableId(b.typeId)) digYield(owner, b.typeId);
+        setIf(b, "minecraft:air");
+      } else if (b && ROAD_BLOCKS.has(b.typeId) && !(edge && k <= 3)) {
+        // Остатки старой дороги выше нового настила убирают.
         setIf(b, "minecraft:air");
       }
     }
@@ -255,18 +346,22 @@ export function layRoads() {
   let budget = 16;
   let changed = false;
   for (const r of S.roads ?? []) {
-    if (r.v !== 3) continue; // старую дорогу переложат по-новому при ближайшем планировании
-    if (budget <= 0 || !r.done.includes("0")) continue;
+    if (r.v !== 4) continue; // старую дорогу переложат по-новому при ближайшем планировании
+    if (budget <= 0) break;
     const n = r.done.length - 1;
+    if (!r.done.includes("0")) {
+      // Дорога готова — работяги обходят её и исправляют сломанное (по 2 участка в секунду).
+      for (let k = 0; k < 2; k++) {
+        r.fix = ((r.fix ?? 0) + 1) % (n + 1);
+        if (layRoadPoint(dim, r, r.fix)) budget--;
+      }
+      continue;
+    }
     const chars = r.done.split("");
     for (let k = 0; k < 60 && budget > 0; k++) {
       const i = (r.cur + k) % (n + 1);
       if (chars[i] === "1") continue;
       if (i >= (r.pa ?? 0) && i <= n - (r.pb ?? 0)) continue; // ещё не построено
-      if (i < (r.s1 ?? ROAD_SKIP) || i > n - (r.s2 ?? ROAD_SKIP)) {
-        chars[i] = "1";
-        continue;
-      }
       if (!layRoadPoint(dim, r, i)) continue;
       chars[i] = "1";
       budget--;
@@ -275,7 +370,80 @@ export function layRoads() {
     r.cur = (r.cur + 60) % (n + 1);
     r.done = chars.join("");
   }
+  scrapTick(dim);
   if ((changed || (S.roads ?? []).length) && S.clock % 10 === 0) saveRoads();
+}
+
+// ---------- Разбор старых кривых дорог ----------
+const ROAD_BLOCKS = new Set(["minecraft:stone_bricks", "minecraft:polished_andesite", "minecraft:cobblestone", "minecraft:oak_fence", "minecraft:lantern", "minecraft:spruce_planks", "minecraft:spruce_fence", "minecraft:torch"]);
+
+/** Под ногами чужие или свои постройки/стены — такой столб не трогаем. */
+function protectedColumn(x, z) {
+  for (const c of S.civs.values()) {
+    if (c.wall && isOwnWall(c, x, z)) return true;
+    for (const b of c.buildings) if (x >= b.x - 1 && x <= b.x + b.w && z >= b.z - 1 && z <= b.z + b.d) return true;
+  }
+  return false;
+}
+
+/** На новой дороге столб не разбирают. */
+function onLiveRoad(x, z) {
+  for (const r of S.roads ?? []) {
+    if (!r.pts) continue;
+    for (let k = 1; k < r.pts.length; k++) {
+      const [x0, z0] = r.pts[k - 1];
+      const [x1, z1] = r.pts[k];
+      if (x >= Math.min(x0, x1) - 2 && x <= Math.max(x0, x1) + 2 && z >= Math.min(z0, z1) - 2 && z <= Math.max(z0, z1) + 2) return true;
+    }
+  }
+  return false;
+}
+
+/** Разбирает поперечный срез старой дороги: дорожные блоки сверху вниз, на месте настила — трава. */
+function scrapColumn(dim, x, z) {
+  if (protectedColumn(x, z) || onLiveRoad(x, z)) return;
+  // Фонари, которые ещё ждали факелов на этом месте, больше не нужны.
+  for (const c of S.civs.values()) if (c.lights?.length) c.lights = c.lights.filter((l) => l.x !== x || l.z !== z);
+  const g = groundAt(dim, x, z);
+  if (!g) return;
+  let y = g.y + 4;
+  let lowest;
+  for (let k = 0; k < 48; k++, y--) {
+    const b = getB(dim, x, y, z);
+    if (!b) break;
+    if (b.isAir) continue;
+    if (!ROAD_BLOCKS.has(b.typeId)) break;
+    setIf(b, "minecraft:air");
+    lowest = y;
+  }
+  if (lowest === undefined) return;
+  const below = getB(dim, x, lowest - 1, z);
+  if (below && !below.isAir && !below.isLiquid && isNatural(below.typeId)) setIf(getB(dim, x, lowest, z), "minecraft:grass_block");
+}
+
+function scrapTick(dim) {
+  const q = S.roadDemo?.[0];
+  if (!q) return;
+  let budget = 6;
+  while (q.i <= q.n && budget > 0) {
+    const i = q.i;
+    if (q.done[i] !== "1") {
+      q.i++;
+      continue;
+    }
+    const { x, z, px, pz } = polyPoint({ ...q, done: q.done }, i);
+    let ok = true;
+    for (let o = -2; o <= 2; o++) if (!loaded(dim, { x: x + px * o, z: z + pz * o })) ok = false;
+    if (!ok) {
+      // Участок далеко — разберут, когда игрок окажется рядом; пока берём следующую дорогу.
+      S.roadDemo.push(S.roadDemo.shift());
+      return;
+    }
+    for (let o = -2; o <= 2; o++) scrapColumn(dim, x + px * o, z + pz * o);
+    q.i++;
+    budget--;
+  }
+  if (q.i > q.n) S.roadDemo.shift();
 }
 
 export function roadInfo(civ) {

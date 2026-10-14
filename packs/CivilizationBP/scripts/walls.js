@@ -127,7 +127,8 @@ function geo(civ) {
   const gates = new Set();
   const cx = Math.floor(civ.center.x);
   const cz = Math.floor(civ.center.z);
-  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+  const side = {};
+  for (const [dx, dz, nm] of [[1, 0, "E"], [-1, 0, "W"], [0, 1, "S"], [0, -1, "N"]]) {
     let best = -1;
     let bd = -1;
     cols.forEach((c, i) => {
@@ -138,7 +139,10 @@ function geo(civ) {
         best = i;
       }
     });
-    if (best >= 0) gates.add(best);
+    if (best >= 0) {
+      gates.add(best);
+      side[nm] = best;
+    }
   }
   // Ворота, к которым подходят дороги от соседей.
   for (const k of (w.rg ?? "").split(";")) {
@@ -174,7 +178,7 @@ function geo(civ) {
     if (j > 0) stack.push(k - 1);
     if (j < D - 1) stack.push(k + 1);
   }
-  civ._wg = { c: w.c, rg: w.rg ?? "", cols, idx, gates, x0, z0, W, D, grid };
+  civ._wg = { c: w.c, rg: w.rg ?? "", cols, idx, gates, side, x0, z0, W, D, grid };
   return civ._wg;
 }
 
@@ -380,6 +384,19 @@ export function roadGate(civ, toward) {
   dx /= l;
   dz /= l;
   return { x: Math.round(c.x + dx * 2), z: Math.round(c.z + dz * 2), key: `${c.x},${c.z}` };
+}
+
+export const SIDE_DIR = { E: [1, 0], W: [-1, 0], S: [0, 1], N: [0, -1] };
+
+/** Ворота стены на стороне света (E, W, S, N): точка дороги сразу за ними, или null. */
+export function sideGate(civ, side) {
+  migrate(civ);
+  const g = civ.wall?.s && geo(civ);
+  const i = g?.side?.[side];
+  if (i === undefined) return null;
+  const c = g.cols[i];
+  const [dx, dz] = SIDE_DIR[side];
+  return { x: c.x + dx * 2, z: c.z + dz * 2 };
 }
 
 /** Ворота под дороги: ровно те столбы, к которым сейчас подходят дороги. */
