@@ -31,13 +31,13 @@ export function isActive(civ) {
 // Скорость работы одного жителя в минуту в зависимости от множителя инструмента m
 // (рука 3, дерево 1.6, камень 1, железо 0.7, алмаз 0.5). Числа сняты с «живой» симуляции.
 export const RATE = {
-  wood: (m) => 560 / (15 + 3.5 * m), // лесоруб: дерево/мин (перемерено: поиск дерева, ходьба, посадка саженцев)
-  blocks: (m) => 60 / (1.1 * m + 0.3), // шахтёр: блоков/мин
+  wood: (m) => 420 / (15 + 3.5 * m), // лесоруб: дерево/мин (перемерено 4.0.1: поиск дерева, ходьба, посадка саженцев)
+  blocks: (m) => 33 / (1.1 * m + 0.3), // шахтёр: блоков/мин
   food: (m) => 13 / (1.2 * m + 1), // фермер: еда/мин
   hunt: 2, // охотник: еда/мин
   eat: 0.375, // один житель съедает еды/мин
-  build: 60, // строитель: блоков/мин
-  eff: 0.6, // в фоне работают на 40% медленнее — с запасом на дорогу, ночь и непредвиденное
+  build: 130, // строитель: блоков/мин (перемерено: вживую ~131)
+  eff: 0.9, // небольшой запас на дорогу, ночь и непредвиденное
 };
 
 /** Профессии в фоне — по тем же правилам, что и вживую, но от текущего населения. */
@@ -52,7 +52,7 @@ function rolesFor(civ, n) {
   const farms = count(civ, (b) => b.t.startsWith("farm"));
   const foodLow = civ.res.food < n * 3 + 5;
   if (civ.war && n >= 2) give("soldier", Math.max(1, Math.floor(n * 0.45)));
-  give("builder", n >= 6 ? 2 : 1);
+  give("builder", n >= 12 ? 3 : n >= 6 ? 2 : 1);
   // Дефицит — как вживую: до 40% жителей на добычу нужного ресурса.
   const def = deficitOf(civ);
   if (def && n >= 3) for (const [role, k] of Object.entries(deficitRoles(civ, def, n, farms))) give(role, k);
@@ -144,14 +144,14 @@ export function offscreenTick(civ, dt) {
   const blocks = (R.miner ?? 0) * RATE.blocks(mult("miner")) * RATE.eff * k * techMult(civ, "picks");
   // В камне попадаются андезит и уголь — их откладывают отдельно.
   gain(civ, off, "stone", blocks * 0.85);
-  gain(civ, off, "andesite", blocks * 0.1);
-  gain(civ, off, "coal", blocks * 0.015);
-  if ((T.miner ?? 0) >= 2) gain(civ, off, "iron", blocks * 0.008); // железо — с каменной кирки
-  if ((T.miner ?? 0) >= 3) gain(civ, off, "diamond", blocks * 0.0006); // алмазы — с железной
+  gain(civ, off, "andesite", blocks * 0.11);
+  gain(civ, off, "coal", blocks * 0.035);
+  if ((T.miner ?? 0) >= 2) gain(civ, off, "iron", blocks * 0.035); // железо — с каменной кирки
+  if ((T.miner ?? 0) >= 3) gain(civ, off, "diamond", blocks * 0.0015); // алмазы — с железной
   // Золото (с каменной киркой и лучше) сразу чеканят в монеты: 100 монет за руду.
   if ((T.miner ?? 0) >= 2) {
     // Шахта в золотом слое (когда нужны монеты) — золота вдвое больше.
-    const t = (off.frac.gold ?? 0) + blocks * 0.003 * ((civ.goldRush ?? 0) > S.clock ? 2 : 1);
+    const t = (off.frac.gold ?? 0) + blocks * 0.006 * ((civ.goldRush ?? 0) > S.clock ? 2 : 1);
     const ore = Math.floor(t);
     off.frac.gold = t - ore;
     civ.coins = (civ.coins ?? 0) + ore * COINS_PER_GOLD;
