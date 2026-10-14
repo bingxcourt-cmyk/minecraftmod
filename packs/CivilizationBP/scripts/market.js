@@ -7,25 +7,34 @@ import { wallLeft, WALL_STONE } from "./walls.js";
 import { glassGoal } from "./industry.js";
 import { has } from "./society.js";
 
-// Общий рынок с «торговым домом»: поселения продают ему излишки и покупают то, чего не хватает.
-// Цена каждого товара зависит от запаса на рынке: товара мало — дорого, много — дёшево.
-// price = БАЗА × (ЦЕЛЕВОЙ_ЗАПАС / (запас + 1))^0.6 — нижнего предела нет (рынок есть рынок),
-// сверху цена ограничена БАЗА×5, чтобы редкий товар не стал совсем недоступным.
+// Рынок — прямая торговля между поселениями (биржа). Излишки выставляют лотами: товар
+// откладывают со склада, монеты продавец получает, только когда кто-то купит. Покупатель берёт
+// у самого дешёвого продавца, монеты уходят продавцу. Монеты не берутся из ниоткуда —
+// они только переходят из казны в казну.
+// Цена: продавец ставит чуть дешевле конкурентов (или по цене последней сделки, если конкурентов нет);
+// непроданный лот каждую минуту дешевеет на 10% — нижнего предела нет. Товар нужен, а его нет —
+// цена последней сделки растёт на 5% (до ×5 базовой).
 export const BASE = { wood: 1, stone: 1, dirt: 0.5, andesite: 1.5, food: 2, coal: 4, saplings: 6, sand: 1.5, glass: 4, iron: 64, diamond: 512 };
-const TARGET = { wood: 600, stone: 600, dirt: 600, andesite: 300, food: 300, coal: 120, saplings: 30, sand: 400, glass: 300, iron: 30, diamond: 4 };
 const CAP = { wood: 200, stone: 200, dirt: 200, andesite: 120, food: 80, coal: 20, saplings: 10, sand: 128, glass: 160, iron: 10, diamond: 2 };
+const LOT_MAX = { wood: 600, stone: 600, dirt: 600, andesite: 300, food: 200, coal: 100, saplings: 40, sand: 400, glass: 400, iron: 40, diamond: 8 };
 export const GOOD_NAME = { wood: "дерево", stone: "камень", dirt: "земля", andesite: "андезит", food: "еда", coal: "уголь", saplings: "саженцы", sand: "песок", glass: "стекло", iron: "железо", diamond: "алмазы" };
-const BID = 0.8;
 const SOCIAL_SAPLINGS = 20; // бесплатных саженцев в фонде на весь мир
-const SOCIAL_PER_CIV = 4; // одному поселению — не больше 4 // рынок покупает дешевле, чем продаёт (его доля)
+const SOCIAL_PER_CIV = 4; // одному поселению — не больше 4
 
 export function loadMarket() {
   try {
     S.market = JSON.parse(String(world.getDynamicProperty("civ:market") ?? "null"));
   } catch {}
-  // Торговцев со стороны нет: на рынке только то, что продали сами поселения. В новом мире рынок пуст.
-  if (!S.market) S.market = { stock: Object.fromEntries(Object.keys(TARGET).map((k) => [k, 0])), prev: {} };
-  for (const k of Object.keys(TARGET)) if (!Number.isFinite(S.market.stock[k])) S.market.stock[k] = 0;
+  if (!S.market) S.market = { lots: [], last: {}, prev: {} };
+  S.market.last = S.market.last ?? {};
+  // Старый рынок с «торговым домом»: его запасы распродаются как лоты без хозяина (монеты за них исчезают).
+  if (!S.market.lots) {
+    S.market.lots = [];
+    for (const [k, q] of Object.entries(S.market.stock ?? {})) {
+      if (BASE[k] && q >= 1) S.market.lots.push({ civ: null, k, qty: Math.floor(q), price: BASE[k], t: S.clock });
+    }
+  }
+  delete S.market.stock;
   // Социальный фонд: 20 бесплатных саженцев на весь мир, не пополняется.
   if (S.market.social === undefined) S.market.social = SOCIAL_SAPLINGS;
 }
@@ -36,10 +45,64 @@ export function saveMarket() {
   } catch {}
 }
 
+const lotsOf = (k, except) => S.market.lots.filter((l) => l.k === k && l.qty > 0 && l.civ !== except).sort((a, b) => a.price - b.price);
+export const stockOf = (k) => S.market.lots.reduce((n, l) => n + (l.k === k ? l.qty : 0), 0);
+
+/** Справочная цена: самый дешёвый лот, а если лотов нет — цена последней сделки. */
 export function price(k) {
-  const st = S.market.stock[k] ?? 0;
-  const p = BASE[k] * Math.pow(TARGET[k] / (st + 1), 0.6);
-  return Math.min(BASE[k] * 5, p);
+  const best = lotsOf(k)[0];
+  return best ? best.price : S.market.last[k] ?? BASE[k];
+}
+
+const sellerName = (l) => (l.civ ? S.civs.get(l.civ)?.name ?? "?" : "старый торговый дом");
+
+/** Выставить товар на продажу: он уходит со склада в лот, монеты — когда купят. */
+function post(civ, k, qty) {
+  qty = Math.floor(Math.min(qty, civ.res[k] ?? 0));
+  if (qty <= 0) return 0;
+  let lot = S.market.lots.find((l) => l.civ === civ.id && l.k === k);
+  qty = Math.min(qty, LOT_MAX[k] - (lot?.qty ?? 0));
+  if (qty <= 0) return 0;
+  const rival = lotsOf(k, civ.id)[0];
+  const ask = rival ? rival.price * 0.98 : Math.min(BASE[k] * 5, (S.market.last[k] ?? BASE[k]) * 1.05);
+  civ.res[k] -= qty;
+  if (!lot) {
+    lot = { civ: civ.id, k, qty: 0, price: ask, t: S.clock };
+    S.market.lots.push(lot);
+  }
+  lot.qty += qty;
+  lot.price = Math.min(lot.price, ask);
+  return qty;
+}
+
+/** Купить у самых дешёвых продавцов. */
+function buy(civ, k, qty) {
+  let got = 0;
+  let cost = 0;
+  const from = [];
+  for (const l of lotsOf(k, civ.id)) {
+    if (got >= qty) break;
+    const q = Math.min(qty - got, l.qty, Math.floor((civ.coins ?? 0) / l.price));
+    if (q <= 0) break;
+    const c = Math.max(1, Math.ceil(q * l.price));
+    civ.coins -= c;
+    l.qty -= q;
+    got += q;
+    cost += c;
+    S.market.last[k] = l.price;
+    const seller = l.civ ? S.civs.get(l.civ) : undefined;
+    if (seller) {
+      seller.coins = (seller.coins ?? 0) + c;
+      markDirty(seller);
+      const text = `продали ${q} ${GOOD_NAME[k]} поселению ${civ.name} за ${c} мон.`;
+      log(seller, text);
+      note("market", `${seller.name}: ${text}`);
+    }
+    from.push(`${q} у ${sellerName(l)}`);
+  }
+  civ.res[k] = (civ.res[k] ?? 0) + got;
+  if (k === "food") civ.res.food = Math.min(civ.res.food, foodCap(civ));
+  return { qty: got, cost, from: from.join(", ") };
 }
 
 /** Чего поселению реально не хватает прямо сейчас (а не «на всякий случай»). */
@@ -111,28 +174,6 @@ function log(civ, text) {
 }
 
 
-function sell(civ, k, qty) {
-  if (qty <= 0) return 0;
-  const got = Math.floor(price(k) * BID * qty);
-  if (got <= 0) return 0; // за бесценок не продают
-  civ.res[k] -= qty;
-  civ.coins = (civ.coins ?? 0) + got;
-  S.market.stock[k] = (S.market.stock[k] ?? 0) + qty;
-  return got;
-}
-
-function buy(civ, k, qty) {
-  const stock = Math.floor(S.market.stock[k] ?? 0);
-  qty = Math.min(qty, stock, Math.floor((civ.coins ?? 0) / price(k)));
-  if (qty <= 0) return { qty: 0, cost: 0 };
-  const cost = Math.ceil(price(k) * qty);
-  civ.coins -= cost;
-  civ.res[k] = (civ.res[k] ?? 0) + qty;
-  if (k === "food") civ.res.food = Math.min(civ.res.food, foodCap(civ));
-  S.market.stock[k] = stock - qty;
-  return { qty, cost };
-}
-
 /**
  * Раз в 30 секунд для каждого поселения: торгуют только по нужде.
  * Не хватает денег — продают свои излишки; склады переполнены — продают часть лишнего.
@@ -161,19 +202,25 @@ export function marketTick() {
       need.saplings -= q;
       deals.push(`получили ${q} саженцев из социального фонда бесплатно (в фонде осталось ${S.market.social})`);
     }
+    // Свой лот с товаром, который теперь нужен самим, — снимают с продажи.
+    for (const l of S.market.lots) {
+      if (l.civ !== civ.id || !(need[l.k] > 0) || l.qty <= 0) continue;
+      const q = Math.min(l.qty, need[l.k]);
+      l.qty -= q;
+      civ.res[l.k] = (civ.res[l.k] ?? 0) + q;
+      need[l.k] -= q;
+    }
     for (const k of Object.keys(need)) {
       if (need[k] <= 0) continue;
       const cost = Math.ceil(price(k) * need[k]);
-      // Денег не хватает: сначала продают то, чего у них лишнее (самое дорогое лишнее — первым).
+      // Денег не хватает: выставляют свои излишки (самое дорогое — первым), монеты придут, когда купят.
       if (civ.coins < cost) {
         for (const r of Object.keys(spare).sort((a, b) => spare[b] * price(b) - spare[a] * price(a))) {
-          if (r === k || need[r] || civ.coins >= cost) continue;
-          const want = Math.ceil((cost - civ.coins) / (price(r) * BID));
-          const q = Math.min(spare[r], want, CAP[r]);
-          const got = sell(civ, r, q);
-          if (got > 0) {
+          if (r === k || need[r]) continue;
+          const q = post(civ, r, Math.min(spare[r], CAP[r]));
+          if (q > 0) {
             spare[r] -= q;
-            deals.push(`продали ${q} ${GOOD_NAME[r]} за ${got} мон.`);
+            deals.push(`выставили на продажу ${q} ${GOOD_NAME[r]}`);
           }
         }
       }
@@ -189,21 +236,22 @@ export function marketTick() {
         }
       }
       const b = buy(civ, k, need[k]);
-      if (b.qty > 0) deals.push(`купили ${b.qty} ${GOOD_NAME[k]} за ${b.cost} мон.`);
+      if (b.qty > 0) deals.push(`купили ${GOOD_NAME[k]}: ${b.from} — за ${b.cost} мон.`);
       // Не смогли купить всё нужное: нет денег — повод взять кредит; нет товара — повод воевать.
       if (b.qty < need[k]) {
         civ.unmet[k] = need[k] - b.qty;
-        const stock = Math.floor(S.market.stock[k] ?? 0);
-        if (stock > b.qty) civ._short += Math.ceil(price(k) * Math.min(need[k] - b.qty, stock - b.qty));
+        const stock = stockOf(k);
+        if (stock > 0) civ._short += Math.ceil(price(k) * Math.min(need[k] - b.qty, stock));
+        // Товара нет совсем — он дорожает.
+        else S.market.last[k] = Math.min(BASE[k] * 5, (S.market.last[k] ?? BASE[k]) * 1.05);
       }
     }
-    // Склады ломятся — продают часть излишков (кроме камня, нужного на стену).
-    for (const k of ["wood", "stone", "dirt", "andesite", "food", "sand", "glass"]) {
+    // Склады ломятся — выставляют часть излишков (кроме камня, нужного на стену).
+    for (const k of ["wood", "stone", "dirt", "andesite", "food", "sand", "glass", "iron", "coal"]) {
       if (k === "stone" && wallLeft(civ) > 0) continue;
-      if (spare[k] > 400) {
-        const q = Math.min(CAP[k], Math.floor(spare[k] / 6));
-        const got = sell(civ, k, q);
-        if (got > 0) deals.push(`продали излишки: ${q} ${GOOD_NAME[k]} за ${got} мон.`);
+      if (spare[k] > (k === "iron" || k === "coal" ? 40 : 400)) {
+        const q = post(civ, k, Math.min(CAP[k], Math.floor(spare[k] / 6)));
+        if (q > 0) deals.push(`выставили излишки: ${q} ${GOOD_NAME[k]}`);
       }
     }
     if (deals.length) {
@@ -213,32 +261,42 @@ export function marketTick() {
     }
     markDirty(civ);
   }
+  // Непроданное дешевеет; лоты исчезнувших поселений пропадают.
+  for (const l of S.market.lots) {
+    if (S.clock - (l.t ?? 0) >= 60) {
+      l.price *= 0.9;
+      l.t = S.clock;
+    }
+  }
+  S.market.lots = S.market.lots.filter((l) => l.qty > 0 && (l.civ === null || S.civs.has(l.civ)));
   saveMarket();
 }
 
-/** Продать излишки, чтобы набрать нужную сумму (для выплаты долга). Возвращает вырученное. */
+/** Выставить излишки, чтобы набрать нужную сумму (для выплаты долга). Монеты придут, когда купят. */
 export function raiseCoins(civ, amount) {
   if (civ.marketBan) return 0;
   const spare = spareOf(civ);
-  let got = 0;
+  let worth = 0;
   for (const r of Object.keys(spare).sort((a, b) => spare[b] * price(b) - spare[a] * price(a))) {
-    if (got >= amount || spare[r] <= 0) continue;
-    const q = Math.min(spare[r], Math.ceil((amount - got) / (price(r) * BID)), CAP[r]);
-    got += sell(civ, r, q);
+    if (worth >= amount || spare[r] <= 0) continue;
+    const q = post(civ, r, Math.min(spare[r], Math.ceil((amount - worth) / Math.max(0.01, price(r))), CAP[r]));
+    worth += q * price(r);
   }
-  return got;
+  return 0;
 }
 
 /** Текст для меню рынка. */
 export function marketText() {
-  const lines = ["§lЦены (монет за 1 шт.)§r — растут, когда товара мало:"];
+  const lines = ["§lБиржа (монет за 1 шт.)§r — самый дешёвый продавец:"];
   for (const k of Object.keys(BASE)) {
     const p = price(k);
     const prev = S.market.prev?.[k] ?? p;
     const arrow = p > prev * 1.01 ? "§cдорожает" : p < prev * 0.99 ? "§aдешевеет" : "";
-    lines.push(`${GOOD_NAME[k]}: §e${p < 1 ? p.toFixed(2) : p < 10 ? p.toFixed(1) : Math.round(p)}§r ${arrow}§r  §8(на рынке ${Math.floor(S.market.stock[k] ?? 0)})`);
+    const best = lotsOf(k)[0];
+    const who = best ? ` у ${sellerName(best)}` : " §8(нет в продаже)";
+    lines.push(`${GOOD_NAME[k]}: §e${p < 1 ? p.toFixed(2) : p < 10 ? p.toFixed(1) : Math.round(p)}§r${who}§r ${arrow}§r  §8(всего ${stockOf(k)})`);
   }
-  lines.push(`§8Торговцев со стороны нет: товар появляется, только когда его продаст поселение.§r`);
+  lines.push(`§8Торгуют только поселения между собой: монеты переходят от покупателя к продавцу.§r`);
   lines.push(`Социальный фонд саженцев: §e${S.market.social ?? 0}§r (бесплатно, по ${SOCIAL_PER_CIV} на поселение)`);
   lines.push("", "§lКазна поселений:§r");
   for (const c of S.civs.values()) lines.push(`${c.color}${c.name}§r: ${Math.floor(c.coins ?? 0)} мон.`);

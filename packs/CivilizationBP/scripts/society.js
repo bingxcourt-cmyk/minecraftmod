@@ -17,7 +17,7 @@ export const ERAS = [
   { name: "Племя", queue: ["center", "farm_small", "hut", "hut", "well"], next: { pop: 4, stone: 10 } },
   { name: "Деревня", queue: ["house", "smithy", "farm", "house", "barn", "watchtower"], next: { pop: 7, iron: 6 } },
   { name: "Город", queue: ["townhall", "stonehouse", "barracks", "farm", "stonehouse", "watchtower"], next: { pop: 12, iron: 15 } },
-  { name: "Королевство", queue: ["castle", "stonehouse", "watchtower", "farm", "barracks", "stonehouse"], next: { pop: 30, iron: 40, coins: 5000 } },
+  { name: "Королевство", queue: ["castle", "stonehouse", "watchtower", "farm", "barracks", "stonehouse"], next: { pop: 30, iron: 40, coins: 2000 } },
   // Сверхбогатые поселения начинают индустриализацию: стекольный завод и небоскрёбы.
   { name: "Индустриализация", queue: ["glassworks", "skyscraper", "farm", "skyscraper", "skyscraper"], next: null },
 ];

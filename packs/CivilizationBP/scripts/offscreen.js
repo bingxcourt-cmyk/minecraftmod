@@ -5,6 +5,7 @@ import { MAX_POP, popOf, housingOf, chooseNext, count, has, join, eraTick, noteB
 import { findDrySpot } from "./blocks.js";
 import { brainOf, foodCap, remainingCost, RES_NAME } from "./workers.js";
 import { glassShort, smeltTick } from "./industry.js";
+import { COINS_PER_GOLD } from "./mine.js";
 import { findSafeSpot } from "./nav.js";
 import { craftTorches } from "./lights.js";
 import { raidOffscreen } from "./bandits.js";
@@ -140,6 +141,14 @@ export function offscreenTick(civ, dt) {
   gain(civ, off, "coal", blocks * 0.015);
   if ((T.miner ?? 0) >= 2) gain(civ, off, "iron", blocks * 0.008); // железо — с каменной кирки
   if ((T.miner ?? 0) >= 3) gain(civ, off, "diamond", blocks * 0.0006); // алмазы — с железной
+  // Золото (тоже с железной киркой) сразу чеканят в монеты: 10 монет за руду.
+  if ((T.miner ?? 0) >= 3) {
+    const t = (off.frac.gold ?? 0) + blocks * 0.003;
+    const ore = Math.floor(t);
+    off.frac.gold = t - ore;
+    civ.coins = (civ.coins ?? 0) + ore * COINS_PER_GOLD;
+    civ.minted = (civ.minted ?? 0) + ore * COINS_PER_GOLD;
+  }
   // Песок копают руками (лопат у жителей нет): ~40 блоков в минуту.
   gain(civ, off, "sand", (R.sander ?? 0) * 40 * RATE.eff * k);
   // Земля: землекопы (~40 в минуту) и то, что срезают при выравнивании и проходке шахты.

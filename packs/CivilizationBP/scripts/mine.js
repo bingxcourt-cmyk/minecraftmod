@@ -127,6 +127,9 @@ const MANMADE = /planks|brick|glass|wool|concrete|door|fence|torch|rail|chest|sl
 const isOre = (id) => strip(id).endsWith("_ore");
 const isCoalOre = (id) => id === "minecraft:coal_ore" || id === "minecraft:deepslate_coal_ore";
 const isDiamondOre = (id) => id === "minecraft:diamond_ore" || id === "minecraft:deepslate_diamond_ore";
+const isGoldOre = (id) => id === "minecraft:gold_ore" || id === "minecraft:deepslate_gold_ore";
+// Монеты чеканят из золота: одна золотая руда = 10 монет в казну. Других источников денег в мире нет.
+export const COINS_PER_GOLD = 10;
 
 function yieldOf(civ, id, tier, deep) {
   // Как у Стива: железо — каменной киркой и лучше, алмазы — железной и лучше.
@@ -138,6 +141,12 @@ function yieldOf(civ, id, tier, deep) {
     if (tier >= 2) civ.res.iron += 1;
   } else if (isDiamondOre(id)) {
     if (tier >= 3) civ.res.diamond = (civ.res.diamond ?? 0) + 1;
+  } else if (isGoldOre(id)) {
+    // Золото, как у Стива, — только железной киркой и лучше.
+    if (tier >= 3) {
+      civ.coins = (civ.coins ?? 0) + COINS_PER_GOLD;
+      civ.minted = (civ.minted ?? 0) + COINS_PER_GOLD;
+    } else civ.res.stone += 1;
   } else if (isStoneLike(id) || isOre(id)) {
     civ.res.stone += 1;
     if (deep && tier >= 2 && Math.random() < 0.02) civ.res.iron += 1;
