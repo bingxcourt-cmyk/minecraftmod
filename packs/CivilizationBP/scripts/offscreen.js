@@ -229,39 +229,45 @@ export function offscreenTick(civ, dt) {
     civ.offQueue.unshift({ t: q.t, x: q.x, y: q.y, z: q.z, r: q.r });
     civ.project = null;
   }
-  const p = civ.project;
-  if (p && !p.paid) {
-    const ops = remainingCost(civ);
-    const left = getBP(p.t).ops.length;
-    const miss = shortOf(civ, ops);
-    civ.waiting = miss ? RES_NAME[miss] ?? miss : "";
-    if (off.build >= left && !miss) {
-      pay(civ, ops);
-      off.build -= left;
-      // Место уже выбрано — блоки поставят, когда игрок придёт.
-      civ.offQueue.push({ t: p.t, x: p.x, y: p.y, z: p.z, r: p.r });
-      if (p.fromQueue) civ.qi++;
-      civ.project = null;
-      off.built.push(TYPES[p.t].name);
+  // Как вживую: ресурсы уходят в стройку постепенно, по мере поступления (вживую строители
+  // берут их блок за блоком), а не копятся на складе целиком — иначе содержание и рынок
+  // забирали бы их раньше, и стройка вдали почти не двигалась.
+  const p = civ.project && !civ.project.paid ? civ.project : null;
+  const next = p ? null : chooseNext(civ);
+  const target = p ? { key: `p:${p.t}:${p.x},${p.z}:${p.step}`, t: p.t, cost: remainingCost(civ) } : next ? { key: `n:${next.t}`, t: next.t, cost: totalCost(next.t) } : null;
+  if (off.inv && off.inv.key !== target?.key) refundInvest(civ);
+  if (target) {
+    const inv = (off.inv = off.inv ?? { key: target.key, paid: {} });
+    let miss = null;
+    for (const [r, need] of Object.entries(target.cost)) {
+      const left = need - (inv.paid[r] ?? 0);
+      if (left <= 0) continue;
+      // Есть долг по содержанию — стройка и долг делят ресурс пополам, как вживую.
+      const share = (civ.upkeep?.debt?.[r] ?? 0) > 0 ? 0.5 : 1;
+      const take = Math.max(0, Math.min(left, Math.floor((civ.res[r] ?? 0) * share)));
+      civ.res[r] = (civ.res[r] ?? 0) - take;
+      inv.paid[r] = (inv.paid[r] ?? 0) + take;
+      if (take < left && !miss) miss = r;
     }
-  } else if (!p) {
-    const next = chooseNext(civ);
-    if (next) {
-      const cost = totalCost(next.t);
-      // Запоминаем, на что копят: рынок не продаст эти ресурсы как излишки.
-      civ._nextCost = cost;
-      const n = getBP(next.t).ops.length;
-      const miss = shortOf(civ, cost);
-      civ.waiting = miss ? RES_NAME[miss] ?? miss : "";
-      if (off.build >= n && !miss) {
-        pay(civ, cost);
-        civ._nextCost = null;
-        off.build -= n;
+    // Остаток стоимости — рынок не продаст это как излишки и купит недостающее.
+    civ._nextCost = Object.fromEntries(Object.entries(target.cost).map(([r, v]) => [r, Math.max(0, v - (inv.paid[r] ?? 0))]));
+    civ.waiting = miss ? RES_NAME[miss] ?? miss : "";
+    const n = getBP(target.t).ops.length;
+    if (!miss && off.build >= n) {
+      off.build -= n;
+      off.inv = null;
+      civ._nextCost = null;
+      if (p) {
+        // Место уже выбрано — блоки поставят, когда игрок придёт.
+        civ.offQueue.push({ t: p.t, x: p.x, y: p.y, z: p.z, r: p.r });
+        if (p.fromQueue) civ.qi++;
+        civ.project = null;
+      } else {
         civ.offQueue.push({ t: next.t });
         noteBuilt(civ, next.t);
         if (next.fromQueue) civ.qi++;
-        off.built.push(TYPES[next.t].name);
       }
+      off.built.push(TYPES[target.t].name);
     }
   }
   craftTorches(civ);
@@ -350,9 +356,19 @@ function fixCenter(civ) {
 }
 
 /** Игрок вернулся: появляются родившиеся, исчезают умершие, выводится сводка. */
+/** Вложенное в недостроенную фоновую постройку возвращается на склад. */
+function refundInvest(civ) {
+  const inv = civ.off?.inv;
+  if (!inv) return;
+  for (const [r, v] of Object.entries(inv.paid)) civ.res[r] = (civ.res[r] ?? 0) + v;
+  civ.off.inv = null;
+  civ._nextCost = null;
+}
+
 export function materialize(civ) {
   const off = civ.off;
   if (!off) return;
+  refundInvest(civ);
   fixCenter(civ);
   const target = Math.max(0, (civ.census?.pop ?? 0) + off.pop);
   civ.off = null;
