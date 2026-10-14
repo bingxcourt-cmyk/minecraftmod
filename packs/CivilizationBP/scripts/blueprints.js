@@ -14,6 +14,14 @@ const COST = {
   bell: { iron: 1 }, lantern: {}, iron_bars: { iron: 1 },
   hay_block: { food: 2 },
   glass: { glass: 1 }, smooth_stone: { stone: 1 },
+  // Отделка: ступеньки, плиты, двери, люки, наличники.
+  oak_stairs: { wood: 1 }, spruce_stairs: { wood: 1 }, dark_oak_stairs: { wood: 1 },
+  stone_brick_stairs: { stone: 1 }, stone_stairs: { stone: 1 },
+  oak_slab: { wood: 1 }, spruce_slab: { wood: 1 }, stone_brick_slab: { stone: 1 },
+  spruce_door: { wood: 2 }, spruce_trapdoor: { wood: 1 }, oak_pressure_plate: { wood: 1 },
+  stripped_oak_log: { wood: 2 }, stripped_spruce_log: { wood: 2 }, chiseled_stone_bricks: { stone: 1 },
+  cracked_stone_bricks: { stone: 1 }, polished_andesite: { andesite: 1 }, flower_pot: {},
+  oak_leaves: {}, grindstone: { stone: 2, wood: 1 }, cauldron: { iron: 3 },
 };
 
 class BP {
@@ -65,6 +73,40 @@ class BP {
     });
     this.beds++;
   }
+  // Двускатная крыша из ступенек: конёк вдоль z, скаты в стороны x, фронтоны заполняются fill.
+  gable(x0, z0, x1, z1, y, stair, fill, ridge) {
+    for (let i = 0; ; i++) {
+      const xa = x0 + i;
+      const xb = x1 - i;
+      const yy = y + i;
+      if (xa > xb) break;
+      for (let z = z0; z <= z1; z++) {
+        if (xa === xb) this.set(xa, yy, z, ridge, { "minecraft:vertical_half": "bottom" });
+        else {
+          this.set(xa, yy, z, stair, { weirdo_direction: 0, upside_down_bit: false });
+          this.set(xb, yy, z, stair, { weirdo_direction: 1, upside_down_bit: false });
+        }
+      }
+      for (let x = xa + 1; x < xb; x++) {
+        this.set(x, yy, z0, fill);
+        this.set(x, yy, z1, fill);
+      }
+    }
+  }
+  // Настоящая дверь (две половинки) в проёме на стороне z = 0.
+  realDoor(x, z, id = "spruce_door") {
+    this.del(x, 2, z);
+    this.map.set(`${x},1,${z}`, {
+      x, y: 1, z, id: "minecraft:" + id,
+      st: { direction: 3, upper_block_bit: false, door_hinge_bit: false, open_bit: false },
+      pair: { x, y: 2, z, st: { direction: 3, upper_block_bit: true, door_hinge_bit: false, open_bit: false } },
+    });
+  }
+  // Деревянный каркас: брёвна по углам и поясом сверху.
+  frame(x0, z0, x1, z1, y0, y1, log) {
+    for (let y = y0; y <= y1; y++) for (const [x, z] of [[x0, z0], [x1, z0], [x0, z1], [x1, z1]]) this.set(x, y, z, log);
+    this.ring(x0, z0, x1, z1, y1, log);
+  }
   door(x, z, width = 1, height = 2) {
     const half = Math.floor(width / 2);
     for (let dx = -half; dx <= half; dx++) for (let y = 1; y <= height; y++) this.del(x + dx, y, z);
@@ -81,11 +123,14 @@ class BP {
 }
 
 function center() {
+  // Центр должен быть по карману новому племени (30 дерева и 12 камня на старте).
   const b = new BP(5, 5);
   b.box(0, 0, 0, 4, 0, 4, "grass_path");
-  b.box(1, 0, 1, 3, 0, 3, "cobblestone");
+  b.box(1, 0, 1, 3, 0, 3, "stone_bricks");
+  b.set(2, 0, 2, "chiseled_stone_bricks");
   b.set(2, 1, 2, "bell", undefined, {});
   b.set(2, 1, 3, "crafting_table");
+  b.set(1, 1, 3, "barrel");
   for (const [x, z] of [[0, 0], [4, 0], [0, 4], [4, 4]]) {
     b.set(x, 1, z, "oak_fence");
     b.set(x, 2, z, "oak_fence");
@@ -96,15 +141,19 @@ function center() {
 
 function hut() {
   const b = new BP(5, 5);
-  b.box(0, 0, 0, 4, 0, 4, "oak_planks");
-  b.walls(0, 0, 4, 4, 1, 3, "oak_planks", "oak_log");
-  b.door(2, 0);
-  b.set(0, 2, 2, "oak_fence");
-  b.set(4, 2, 2, "oak_fence");
-  b.roof(0, 0, 4, 4, 4, "spruce_planks");
+  b.ring(0, 0, 4, 4, 0, "cobblestone");
+  b.box(1, 0, 1, 3, 0, 3, "oak_planks");
+  b.walls(0, 0, 4, 4, 1, 3, "oak_planks");
+  b.frame(0, 0, 4, 4, 1, 3, "oak_log");
+  b.realDoor(2, 0);
+  b.set(0, 2, 2, "glass_pane");
+  b.set(4, 2, 2, "glass_pane");
+  b.set(2, 2, 4, "glass_pane");
+  b.gable(0, 0, 4, 4, 4, "spruce_stairs", "spruce_planks", "spruce_slab");
   b.bed(1, 1, 2, 0);
   b.bed(3, 1, 2, 0);
   b.set(2, 1, 3, "torch");
+  b.set(1, 1, 3, "flower_pot");
   return b.build();
 }
 
@@ -124,25 +173,30 @@ function farm(size) {
   for (const op of b.map.values()) if (op.id === "minecraft:oak_log") op.cost = { wood: 1 };
   b.del(m, 0, 0);
   b.set(m, 0, 0, "grass_path");
-  b.set(0, 1, 0, "composter");
-  b.set(size - 1, 1, 0, "torch");
-  b.set(0, 1, size - 1, "torch");
-  b.set(size - 1, 1, size - 1, "torch");
+  // Столбики по углам с факелами, компостер и стог у входа.
+  for (const [x, z] of [[0, 0], [size - 1, 0], [0, size - 1], [size - 1, size - 1]]) {
+    b.set(x, 1, z, "oak_fence");
+    b.set(x, 2, z, "torch");
+  }
+  b.set(m - 1, 1, 0, "composter");
+  b.set(m + 1, 1, 0, "hay_block");
   return b.build();
 }
 
 function well() {
   const b = new BP(5, 5);
-  b.ring(0, 0, 4, 4, 0, "cobblestone");
+  b.ring(0, 0, 4, 4, 0, "stone_bricks");
   b.box(1, -1, 1, 3, -1, 3, "cobblestone");
   b.box(1, 0, 1, 3, 0, 3, "water", undefined);
   for (const op of b.map.values()) if (op.id === "minecraft:water") op.cost = {};
-  b.ring(0, 0, 4, 4, 1, "cobblestone");
+  b.ring(0, 0, 4, 4, 1, "stone_brick_slab");
   for (const [x, z] of [[0, 0], [4, 0], [0, 4], [4, 4]]) {
+    b.set(x, 1, z, "stone_bricks");
     b.set(x, 2, z, "oak_fence");
     b.set(x, 3, z, "oak_fence");
   }
-  b.roof(0, 0, 4, 4, 4, "oak_planks");
+  b.set(2, 3, 2, "oak_fence"); // цепь для ведра
+  b.gable(0, 0, 4, 4, 4, "spruce_stairs", "spruce_planks", "spruce_slab");
   return b.build();
 }
 
@@ -150,65 +204,114 @@ function house() {
   const b = new BP(7, 7);
   b.ring(0, 0, 6, 6, 0, "cobblestone");
   b.box(1, 0, 1, 5, 0, 5, "oak_planks");
-  b.walls(0, 0, 6, 6, 1, 4, "oak_planks", "oak_log");
-  b.door(3, 0);
-  for (const [x, z] of [[0, 2], [0, 4], [6, 2], [6, 4], [2, 6], [4, 6], [1, 0], [5, 0]]) b.set(x, 2, z, "glass_pane");
-  b.roof(0, 0, 6, 6, 5, "spruce_planks");
+  b.walls(0, 0, 6, 6, 1, 4, "oak_planks");
+  b.ring(0, 0, 6, 6, 1, "cobblestone"); // каменный цоколь
+  b.frame(0, 0, 6, 6, 1, 4, "stripped_oak_log");
+  b.set(3, 4, 0, "oak_log");
+  b.set(3, 4, 6, "oak_log");
+  b.realDoor(3, 0);
+  for (const [x, z] of [[0, 2], [0, 4], [6, 2], [6, 4], [2, 6], [4, 6], [1, 0], [5, 0]]) {
+    b.set(x, 2, z, "glass_pane");
+    b.set(x, 3, z, "glass_pane");
+  }
+  b.gable(0, 0, 6, 6, 5, "dark_oak_stairs", "spruce_planks", "dark_oak_planks");
+  // Труба.
+  for (let y = 1; y <= 8; y++) b.set(5, y, 5, "cobblestone");
+  b.set(5, 9, 5, "cobblestone_wall");
+  b.set(4, 1, 5, "furnace");
   b.bed(1, 1, 4, 0);
-  b.bed(5, 1, 4, 0);
-  b.set(3, 1, 5, "torch");
+  b.bed(3, 1, 4, 0);
   b.set(1, 1, 1, "crafting_table");
   b.set(5, 1, 1, "chest");
+  b.set(4, 1, 2, "oak_fence");
+  b.set(4, 2, 2, "oak_pressure_plate");
+  b.set(1, 1, 2, "bookshelf");
+  b.set(2, 1, 5, "torch");
+  b.set(1, 2, 5, "flower_pot");
   return b.build();
 }
 
 function smithy() {
   const b = new BP(7, 7);
-  b.box(0, 0, 0, 6, 0, 6, "cobblestone");
+  b.box(0, 0, 0, 6, 0, 6, "stone_bricks");
+  b.box(1, 0, 1, 5, 0, 5, "cobblestone");
   for (let y = 1; y <= 3; y++) {
     for (let x = 0; x <= 6; x++) b.set(x, y, 6, "cobblestone");
-    for (let z = 0; z <= 6; z++) {
+    for (let z = 1; z <= 6; z++) {
       b.set(0, y, z, "cobblestone");
       b.set(6, y, z, "cobblestone");
     }
-    b.set(0, y, 0, "oak_log");
-    b.set(6, y, 0, "oak_log");
+    // Открытый фасад на брёвнах.
+    for (const x of [0, 3, 6]) b.set(x, y, 0, "spruce_log");
   }
+  b.del(3, 1, 0);
+  b.del(3, 2, 0);
+  b.ring(0, 0, 6, 6, 4, "spruce_planks");
   b.set(0, 2, 3, "iron_bars");
   b.set(6, 2, 3, "iron_bars");
-  b.roof(0, 0, 6, 6, 4, "dark_oak_planks");
-  b.set(1, 1, 5, "blast_furnace");
+  b.gable(0, 0, 6, 6, 5, "stone_brick_stairs", "stone_bricks", "stone_brick_slab");
+  // Горн с трубой.
+  for (let y = 1; y <= 9; y++) b.set(1, y, 5, y <= 2 ? "blast_furnace" : "stone_bricks");
+  b.set(1, 2, 5, "stone_bricks");
   b.set(2, 1, 5, "furnace");
   b.set(3, 1, 5, "smithing_table");
   b.set(5, 1, 5, "anvil");
-  b.set(4, 1, 5, "torch");
+  b.set(5, 1, 3, "grindstone");
+  b.set(4, 1, 5, "cauldron");
+  b.set(5, 1, 1, "barrel");
+  b.set(1, 1, 1, "torch");
   return b.build();
 }
 
 function barn() {
   const b = new BP(7, 9);
-  b.box(0, 0, 0, 6, 0, 8, "spruce_planks");
-  b.walls(0, 0, 6, 8, 1, 4, "oak_planks", "spruce_log");
+  b.ring(0, 0, 6, 8, 0, "cobblestone");
+  b.box(1, 0, 1, 5, 0, 7, "spruce_planks");
+  b.walls(0, 0, 6, 8, 1, 4, "spruce_planks");
+  b.frame(0, 0, 6, 8, 1, 4, "dark_oak_log");
   b.door(3, 0, 3, 3);
-  b.roof(0, 0, 6, 8, 5, "dark_oak_planks");
+  // Ворота-люки над проёмом и окошки.
+  for (const x of [2, 3, 4]) b.set(x, 4, 0, "dark_oak_planks");
+  for (const z of [3, 5]) {
+    b.set(0, 3, z, "glass_pane");
+    b.set(6, 3, z, "glass_pane");
+  }
+  b.gable(0, 0, 6, 8, 5, "spruce_stairs", "dark_oak_planks", "spruce_slab");
+  b.set(3, 6, 0, "spruce_trapdoor", { direction: 3, open_bit: true, upside_down_bit: false });
   b.box(1, 1, 5, 2, 2, 7, "hay_block");
   b.box(4, 1, 6, 5, 1, 7, "hay_block");
+  b.set(5, 2, 7, "hay_block");
   b.set(5, 1, 1, "chest");
   b.set(1, 1, 1, "barrel");
+  b.set(1, 1, 2, "barrel");
   b.set(3, 1, 7, "torch");
   return b.build();
 }
 
 function watchtower() {
   const b = new BP(5, 5);
-  b.box(0, 0, 0, 4, 0, 4, "cobblestone");
-  b.walls(1, 1, 3, 3, 1, 7, "cobblestone", "oak_log");
+  b.box(0, 0, 0, 4, 0, 4, "stone_bricks");
+  b.walls(1, 1, 3, 3, 1, 7, "cobblestone");
+  for (const [x, z] of [[1, 1], [3, 1], [1, 3], [3, 3]]) for (let y = 1; y <= 7; y++) b.set(x, y, z, "spruce_log");
   b.door(2, 1);
+  b.set(2, 4, 3, "glass_pane");
+  b.set(1, 4, 2, "glass_pane");
+  b.set(3, 4, 2, "glass_pane");
   for (let y = 1; y <= 8; y++) b.set(2, y, 2, "ladder", { facing_direction: 2 }, undefined);
-  b.box(0, 8, 0, 4, 8, 4, "oak_planks");
+  b.box(0, 8, 0, 4, 8, 4, "spruce_planks");
   b.set(2, 8, 2, "ladder", { facing_direction: 2 });
-  b.ring(0, 0, 4, 4, 9, "cobblestone_wall");
-  for (const [x, z] of [[0, 0], [4, 0], [0, 4], [4, 4]]) b.set(x, 10, z, "torch");
+  b.ring(0, 0, 4, 4, 9, "oak_fence");
+  for (const [x, z] of [[0, 0], [4, 0], [0, 4], [4, 4]]) {
+    b.set(x, 9, z, "spruce_log");
+    b.set(x, 10, z, "spruce_log");
+  }
+  // Шатровая крыша над площадкой.
+  b.ring(0, 0, 4, 4, 11, "spruce_slab");
+  b.ring(1, 1, 3, 3, 11, "spruce_planks");
+  b.set(2, 12, 2, "spruce_slab");
+  b.set(2, 11, 2, "spruce_planks");
+  b.set(2, 10, 0, "torch");
+  b.set(2, 10, 4, "torch");
   return b.build();
 }
 
@@ -216,61 +319,97 @@ function stonehouse() {
   const b = new BP(7, 9);
   b.ring(0, 0, 6, 8, 0, "stone_bricks");
   b.box(1, 0, 1, 5, 0, 7, "spruce_planks");
-  b.walls(0, 0, 6, 8, 1, 4, "stone_bricks", "cobblestone");
-  b.door(3, 0);
+  // Низ — камень, верх — фахверк.
+  b.walls(0, 0, 6, 8, 1, 2, "stone_bricks");
+  b.walls(0, 0, 6, 8, 3, 4, "spruce_planks");
+  b.frame(0, 0, 6, 8, 1, 4, "stripped_spruce_log");
+  b.ring(0, 0, 6, 8, 3, "stripped_spruce_log");
+  for (const [x, z] of [[0, 3], [6, 5], [2, 8], [4, 0]]) b.set(x, 1, z, "mossy_stone_bricks");
+  b.set(1, 2, 0, "cracked_stone_bricks");
+  b.realDoor(3, 0);
   for (const z of [2, 4, 6]) {
     b.set(0, 2, z, "glass_pane");
     b.set(6, 2, z, "glass_pane");
+    b.set(0, 4, z, "glass_pane");
+    b.set(6, 4, z, "glass_pane");
   }
-  for (const x of [1, 5]) b.set(x, 2, 0, "glass_pane");
-  b.set(3, 2, 8, "glass_pane");
-  b.roof(0, 0, 6, 8, 5, "dark_oak_planks");
-  b.bed(1, 1, 6, 0);
+  for (const x of [1, 5]) {
+    b.set(x, 2, 0, "glass_pane");
+    b.set(x, 4, 0, "glass_pane");
+  }
+  b.set(3, 4, 8, "glass_pane");
+  b.gable(0, 0, 6, 8, 5, "spruce_stairs", "stripped_spruce_log", "spruce_slab");
+  for (let y = 1; y <= 9; y++) b.set(1, y, 7, "stone_bricks");
+  b.set(1, 10, 7, "cobblestone_wall");
+  b.set(1, 1, 6, "furnace");
+  b.bed(1, 1, 5, 0);
   b.bed(3, 1, 6, 0);
   b.bed(5, 1, 6, 0);
   b.set(2, 1, 7, "torch");
   b.set(1, 1, 1, "crafting_table");
   b.set(5, 1, 1, "chest");
   b.set(5, 1, 2, "bookshelf");
+  b.set(5, 1, 3, "bookshelf");
+  b.set(5, 2, 2, "flower_pot");
   return b.build();
 }
 
 function townhall() {
   const b = new BP(11, 9);
-  b.ring(0, 0, 10, 8, 0, "stone_bricks");
+  b.box(0, 0, 0, 10, 0, 8, "stone_bricks");
   b.box(1, 0, 1, 9, 0, 7, "oak_planks");
-  b.walls(0, 0, 10, 8, 1, 5, "stone_bricks", "spruce_log");
+  b.walls(0, 0, 10, 8, 1, 6, "stone_bricks");
+  b.ring(0, 0, 10, 8, 1, "chiseled_stone_bricks"); // цоколь
+  b.ring(0, 0, 10, 8, 6, "polished_andesite"); // карниз
+  // Колонны фасада и по углам.
+  for (const [x, z] of [[0, 0], [10, 0], [0, 8], [10, 8], [3, 0], [7, 0]]) for (let y = 1; y <= 6; y++) b.set(x, y, z, "stripped_oak_log");
   b.door(5, 0, 3, 3);
-  for (const x of [2, 8]) for (const y of [2, 3]) {
+  for (const x of [4, 5, 6]) b.set(x, 4, 0, "stone_brick_stairs", { weirdo_direction: 3, upside_down_bit: true });
+  for (const x of [2, 8]) for (const y of [2, 3, 4]) {
     b.set(x, y, 0, "glass_pane");
     b.set(x, y, 8, "glass_pane");
   }
-  for (const z of [2, 4, 6]) for (const y of [2, 3]) {
+  for (const z of [2, 4, 6]) for (const y of [2, 3, 4]) {
     b.set(0, y, z, "glass_pane");
     b.set(10, y, z, "glass_pane");
   }
-  b.roof(0, 0, 10, 8, 6, "dark_oak_planks");
+  b.gable(0, 0, 10, 8, 7, "dark_oak_stairs", "dark_oak_planks", "dark_oak_slab");
+  // Башенка с колоколом на коньке.
+  for (let y = 12; y <= 13; y++) for (const [x, z] of [[4, 3], [6, 3], [4, 5], [6, 5]]) b.set(x, y, z, "oak_fence");
+  b.box(4, 14, 3, 6, 14, 5, "dark_oak_slab");
   b.set(5, 1, 7, "bell");
   b.set(3, 1, 7, "lectern");
   b.set(7, 1, 7, "cartography_table");
-  b.box(1, 1, 7, 1, 2, 7, "bookshelf");
-  b.box(9, 1, 7, 9, 2, 7, "bookshelf");
-  for (const [x, z] of [[2, 2], [8, 2], [5, 5]]) b.set(x, 1, z, "lantern");
+  b.box(1, 1, 7, 1, 3, 7, "bookshelf");
+  b.box(9, 1, 7, 9, 3, 7, "bookshelf");
+  b.box(1, 1, 1, 1, 2, 1, "bookshelf");
+  b.box(9, 1, 1, 9, 2, 1, "bookshelf");
+  // Длинный стол.
+  for (const x of [4, 5, 6]) {
+    b.set(x, 1, 4, "oak_fence");
+    b.set(x, 2, 4, "oak_pressure_plate");
+  }
+  for (const [x, z] of [[2, 2], [8, 2], [2, 6], [8, 6]]) b.set(x, 1, z, "lantern");
+  for (const [x, z] of [[1, 2], [9, 2]]) b.set(x, 1, z, "flower_pot");
   return b.build();
 }
 
 function barracks() {
   const b = new BP(9, 7);
   b.box(0, 0, 0, 8, 0, 6, "cobblestone");
-  b.walls(0, 0, 8, 6, 1, 3, "cobblestone", "oak_log");
-  b.door(4, 0);
+  b.walls(0, 0, 8, 6, 1, 3, "cobblestone");
+  b.frame(0, 0, 8, 6, 1, 3, "oak_log");
+  for (const x of [4]) for (let y = 1; y <= 3; y++) b.set(x, y, 6, "oak_log");
+  b.realDoor(4, 0);
   for (const x of [2, 6]) b.set(x, 2, 0, "iron_bars");
   b.set(0, 2, 3, "iron_bars");
   b.set(8, 2, 3, "iron_bars");
-  b.roof(0, 0, 8, 6, 4, "spruce_planks");
+  b.gable(0, 0, 8, 6, 4, "spruce_stairs", "spruce_planks", "spruce_slab");
   for (const x of [1, 3, 5, 7]) b.bed(x, 1, 4, 0);
   b.set(2, 1, 1, "smithing_table");
   b.set(6, 1, 1, "chest");
+  b.set(7, 1, 1, "grindstone");
+  b.set(1, 1, 1, "barrel");
   b.set(4, 1, 3, "lantern");
   return b.build();
 }
@@ -417,6 +556,7 @@ function rotState(st, r) {
   const out = { ...st };
   for (let i = 0; i < (r & 3); i++) {
     if (out.direction !== undefined) out.direction = (out.direction + 1) % 4;
+    if (out.weirdo_direction !== undefined) out.weirdo_direction = { 0: 2, 2: 1, 1: 3, 3: 0 }[out.weirdo_direction];
     if (out.facing_direction !== undefined && FACE_CW[out.facing_direction]) out.facing_direction = FACE_CW[out.facing_direction];
     if (out["minecraft:cardinal_direction"]) out["minecraft:cardinal_direction"] = CARD_CW[out["minecraft:cardinal_direction"]];
   }

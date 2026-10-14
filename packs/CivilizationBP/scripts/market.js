@@ -7,7 +7,7 @@ import { money, fmtCoins, transfer, MIN_PRICE } from "./money.js";
 import { COINS_PER_GOLD } from "./mine.js";
 import { RATE } from "./offscreen.js";
 import { wallLeft, WALL_STONE } from "./walls.js";
-import { glassGoal } from "./industry.js";
+import { glassGoal, DIRT_RESERVE } from "./industry.js";
 import { has, START_COINS } from "./society.js";
 
 // Рынок — прямая торговля между поселениями (биржа). Излишки выставляют лотами: товар
@@ -100,7 +100,7 @@ export function taxTick(civ, minutes) {
 function priorityOf(civ, k) {
   if (k === "food" && civ.starving) return 100;
   if ((civ.upkeep?.debt?.[k] ?? 0) > 0) return 80;
-  const map = { дерево: "wood", камень: "stone", железо: "iron", еда: "food", стекло: "glass", песок: "sand", земля: "dirt" };
+  const map = { дерево: "wood", камень: "stone", железо: "iron", еда: "food", стекло: "glass", песок: "sand", земля: "dirt", андезит: "andesite" };
   if (map[civ.waiting] === k) return 60;
   if (k === "saplings") return 50;
   if (k === "stone" || k === "iron") return 40;
@@ -196,7 +196,7 @@ function buy(civ, k, qty) {
 function needsOf(civ) {
   const need = {};
   const rc = remainingCost(civ);
-  const map = { дерево: "wood", камень: "stone", железо: "iron", еда: "food", стекло: "glass", песок: "sand", земля: "dirt" };
+  const map = { дерево: "wood", камень: "stone", железо: "iron", еда: "food", стекло: "glass", песок: "sand", земля: "dirt", андезит: "andesite" };
   // Стройка встала из-за ресурса.
   const w = map[civ.waiting];
   if (w) need[w] = Math.max(1, rc[w] - (civ.res[w] ?? 0));
@@ -248,7 +248,7 @@ function spareOf(civ) {
     coal: Math.ceil((civ.lights?.length ?? 0) / 4) + 4,
     iron: Math.max(rc.iron, next.iron ?? 0) + 8,
     glass: glassGoal(civ),
-    dirt: (rc.dirt ?? 0) + 40, // запас земли на выравнивание следующих площадок
+    dirt: (rc.dirt ?? 0) + DIRT_RESERVE, // запас земли на выравнивание следующих площадок
     sand: has(civ, "glassworks") ? 1e9 : 0, // песок с заводом идёт в плавку
     diamond: 0,
   };

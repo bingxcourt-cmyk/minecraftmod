@@ -52,7 +52,9 @@ const DIG = {
 };
 
 /** Сколько земли не хватает на выравнивание площадки текущей стройки. */
-export const dirtShort = (civ) => (civ.project && !civ.project.paid ? civ.project.fill ?? 0 : 0) - (civ.res.dirt ?? 0);
+// Землю копают заранее: держат запас на текущую подсыпку и ещё DIRT_RESERVE блоков на следующие стройки.
+export const DIRT_RESERVE = 120;
+export const dirtShort = (civ) => (civ.project && !civ.project.paid ? civ.project.fill ?? 0 : 0) + DIRT_RESERVE - (civ.res.dirt ?? 0);
 
 function nearBuilding(civ, x, z, pad) {
   return civ.buildings.some((b) => x >= b.x - pad && x < b.x + b.w + pad && z >= b.z - pad && z < b.z + b.d + pad);
@@ -144,8 +146,18 @@ function digThink(key, civ, ent, brain, tick) {
       note("events", `${civ.name}: ${cfg.found} (${d.x}, ${d.z})`);
     }
   }
+  // Землекоп берёт сразу 2 блока (верхний и под ним) — как игрок лопатой, быстро.
+  if (key === "dirt" && b) {
+    const under = getB(dim, d.x, d.y - 1, d.z);
+    if (under && cfg.ids.has(under.typeId) && d.y - 1 >= (civ[cfg.spot]?.y ?? d.y) - cfg.depth) {
+      try {
+        under.setType("minecraft:air");
+      } catch {}
+      civ.res.dirt = (civ.res.dirt ?? 0) + 1;
+    }
+  }
   brain.dig = null;
-  brain.cd = tick + Math.max(4, Math.round(12 / S.speed));
+  brain.cd = tick + Math.max(3, Math.round(8 / S.speed));
 }
 
 /** Песочник: копает песок для стекла. */

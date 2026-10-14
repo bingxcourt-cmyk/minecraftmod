@@ -610,7 +610,7 @@ export function remainingCost(civ) {
   return need;
 }
 
-export const RES_NAME = { wood: "дерево", stone: "камень", iron: "железо", food: "еда", glass: "стекло", sand: "песок", dirt: "земля" };
+export const RES_NAME = { wood: "дерево", stone: "камень", iron: "железо", food: "еда", glass: "стекло", sand: "песок", dirt: "земля", andesite: "андезит" };
 
 // Срезанный при выравнивании грунт идёт на склад: земля, камень, песок.
 const DIRTY = new Set(["minecraft:dirt", "minecraft:grass_block", "minecraft:coarse_dirt", "minecraft:podzol", "minecraft:rooted_dirt", "minecraft:mycelium", "minecraft:grass_path", "minecraft:dirt_path", "minecraft:mud"]);
@@ -626,7 +626,8 @@ function fillMaterial(civ) {
   if ((civ.res.dirt ?? 0) >= 1) {
     civ.res.dirt--;
     p.fill = Math.max(0, (p.fill ?? 1) - 1);
-    p.dirtWait = 0;
+    // Ожидание сбрасывается, только когда земли хватает на всю подсыпку (а не от одного принесённого блока).
+    if ((civ.res.dirt ?? 0) >= p.fill) p.dirtWait = 0;
     return "minecraft:dirt";
   }
   p.dirtWait = p.dirtWait || S.clock;

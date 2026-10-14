@@ -186,7 +186,7 @@ export function assignRoles(civ) {
   // Решили, что монеты выгоднее добыть золотом, — ещё два шахтёра (с каменной киркой).
   if ((civ.goldRush ?? 0) > S.clock) give("miner", 2);
   // Площадку под стройку нечем подсыпать — землекопы копают землю.
-  if (dirtShort(civ) > 0 && !((civ.noDirt ?? 0) > S.clock)) give("digger", n >= 10 ? 2 : 1);
+  if (dirtShort(civ) > 0 && !((civ.noDirt ?? 0) > S.clock)) give("digger", (n >= 10 ? 2 : 1) + (civ.waiting === "земля" && n >= 6 ? 1 : 0));
   if (building && n >= 12) give("builder", 1);
   // Дерева с избытком — лишние руки идут в шахту и на поля.
   if (civ.res.wood > 250 + need.wood) {

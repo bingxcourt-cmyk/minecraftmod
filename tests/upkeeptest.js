@@ -40,7 +40,7 @@ const st = civ.upkeep;
 const startP = st.period;
 NOW = (startP + 1) * 600000 - 1000; U.upkeepTick(NOW);
 ok("1a. за 1 с до конца периода — не списано", st.period === startP);
-Object.assign(civ.res, { wood: 5000, stone: 5000, iron: 500, food: 500 });
+Object.assign(civ.res, { wood: 5000, stone: 5000, iron: 500, food: 500, andesite: 5000, glass: 5000, dirt: 5000 });
 civ.coins = 777;
 const before = { ...civ.res };
 NOW = (startP + 1) * 600000; U.upkeepTick(NOW); console.log("DBG", startP, st.period, civ.upkeep === st, civ.upkeep.period, U.periodOf(NOW));
