@@ -5,7 +5,7 @@ import { remainingCost, foodCap } from "./workers.js";
 import { note } from "./journal.js";
 import { wallLeft, WALL_STONE } from "./walls.js";
 import { glassGoal } from "./industry.js";
-import { has } from "./society.js";
+import { has, START_COINS } from "./society.js";
 
 // Рынок — прямая торговля между поселениями (биржа). Излишки выставляют лотами: товар
 // откладывают со склада, монеты продавец получает, только когда кто-то купит. Покупатель берёт
@@ -35,6 +35,14 @@ export function loadMarket() {
     }
   }
   delete S.market.stock;
+  // Один раз в старом мире: всем поселениям казна доводится до начальной (200 монет).
+  if (!S.market.start200) {
+    S.market.start200 = true;
+    for (const c of S.civs.values()) {
+      if ((c.coins ?? 0) < START_COINS) c.coins = START_COINS;
+      markDirty(c);
+    }
+  }
   // Социальный фонд: 20 бесплатных саженцев на весь мир, не пополняется.
   if (S.market.social === undefined) S.market.social = SOCIAL_SAPLINGS;
 }
@@ -182,7 +190,7 @@ export function marketTick() {
   S.market.prev = Object.fromEntries(Object.keys(BASE).map((k) => [k, price(k)]));
   for (const civ of S.civs.values()) {
     if (popOf(civ) <= 0) continue;
-    civ.coins = civ.coins ?? 50;
+    civ.coins = civ.coins ?? START_COINS;
     const need = needsOf(civ);
     const spare = spareOf(civ);
     const deals = [];

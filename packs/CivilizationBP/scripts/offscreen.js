@@ -290,9 +290,7 @@ export function virtualColony(civ, dest, n, offscreen) {
   const give = { wood: Math.min(60, civ.res.wood), stone: Math.min(25, civ.res.stone), food: Math.min(40, civ.res.food), saplings: Math.min(4, civ.res.saplings ?? 0) };
   for (const k in give) civ.res[k] = (civ.res[k] ?? 0) - give[k];
   colony.res = { ...give, iron: 0 };
-  const coins = Math.min(40, civ.coins ?? 0);
-  civ.coins = (civ.coins ?? 0) - coins;
-  colony.coins = coins;
+  // Начальная казна колонии — как у любого нового поселения (START_COINS, выдаются при основании).
   if (offscreen) {
     offOf(civ).pop -= n;
     offOf(civ).colonies = (offOf(civ).colonies ?? 0) + 1;

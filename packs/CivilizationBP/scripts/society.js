@@ -69,6 +69,7 @@ export function newCiv(center, parent = null) {
     warLosses: 0,
     waiting: "",
     starving: false,
+    coins: START_COINS,
   };
   S.civs.set(civ.id, civ);
   markDirty(civ);
@@ -585,6 +586,9 @@ function layRoad(from, to) {
   } catch {}
 }
 
+// Начальная казна каждого нового поселения (в том числе колонии).
+export const START_COINS = 200;
+
 // ---------- Колонии ----------
 // Больше цивилизаций не основывается — бережём производительность телефона.
 export const MAX_CIVS = 30;
@@ -671,9 +675,7 @@ export function colonyCheck(civ) {
   const give = { wood: Math.min(60, civ.res.wood), stone: Math.min(25, civ.res.stone), food: Math.min(40, civ.res.food), saplings: Math.min(4, civ.res.saplings ?? 0) };
   for (const k in give) civ.res[k] = (civ.res[k] ?? 0) - give[k];
   colony.res = { ...give, iron: 0 };
-  const coins = Math.min(40, civ.coins ?? 0);
-  civ.coins = (civ.coins ?? 0) - coins;
-  colony.coins = coins;
+  // Начальная казна колонии — как у любого нового поселения (START_COINS, выдаются при основании).
   civ.colony = null;
   civ._reassign = true;
   for (const e of settlers) {
