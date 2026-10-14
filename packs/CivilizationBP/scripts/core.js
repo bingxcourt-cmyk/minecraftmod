@@ -62,6 +62,16 @@ export function setProp(e, k, v) {
 
 export const markDirty = (civ) => S.dirty.add(civ.id);
 
+/**
+ * Уровень поселения: высота пола центра. Все постройки ставят на этот уровень (площадку выравнивают
+ * землёй или камнем), стена стоит на нём же, дороги выходят из ворот на этой высоте.
+ */
+export function levelOf(civ) {
+  if (Number.isFinite(civ.level)) return civ.level;
+  const c = civ.buildings?.find((b) => b.t === "center");
+  return c ? c.y : Math.floor(civ.center.y) - 1;
+}
+
 export function playersNear(p, r) {
   return world
     .getAllPlayers()

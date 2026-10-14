@@ -43,18 +43,43 @@ export function smeltTick(civ, minutes) {
   markDirty(civ);
 }
 
-/** Поиск песка вокруг поселения — понемногу за раз, по расширяющимся кольцам. */
-function scanSand(civ) {
+// Что и как копают: песочники — песок (до 4 блоков вглубь), землекопы — землю (до 2 блоков,
+// чтобы не оставлять ям), не ближе 3 блоков к постройкам и не внутри стены.
+const DIRT = new Set(["minecraft:dirt", "minecraft:grass_block", "minecraft:coarse_dirt", "minecraft:podzol", "minecraft:rooted_dirt"]);
+const DIG = {
+  sand: { ids: SAND, spot: "sandAt", none: "noSand", depth: 4, minR: 16, found: "песочники нашли песок" },
+  dirt: { ids: DIRT, spot: "dirtAt", none: "noDirt", depth: 2, minR: 14, found: "землекопы нашли место, где брать землю" },
+};
+
+/** Сколько земли не хватает на выравнивание площадки текущей стройки. */
+export const dirtShort = (civ) => (civ.project && !civ.project.paid ? civ.project.fill ?? 0 : 0) - (civ.res.dirt ?? 0);
+
+function nearBuilding(civ, x, z, pad) {
+  return civ.buildings.some((b) => x >= b.x - pad && x < b.x + b.w + pad && z >= b.z - pad && z < b.z + b.d + pad);
+}
+
+function diggable(civ, cfg, dim, x, z, minY) {
+  const g = groundAt(dim, x, z);
+  if (!g || g.liquid || g.unnatural || (minY !== undefined && g.y < minY)) return null;
+  if (!cfg.ids.has(getB(dim, x, g.y, z)?.typeId ?? "")) return null;
+  if (insideWall(civ, x, z) || nearBuilding(civ, x, z, 3)) return null;
+  return g;
+}
+
+/** Поиск места для копки вокруг поселения — понемногу за раз, по расширяющимся кольцам. */
+function scanDig(civ, key) {
+  const cfg = DIG[key];
   const dim = DIM();
-  const sc = (civ._sandScan = civ._sandScan ?? { r: 16, k: 0 });
+  civ._scan = civ._scan ?? {};
+  const sc = (civ._scan[key] = civ._scan[key] ?? { r: cfg.minR, k: 0 });
   for (let t = 0; t < 12; t++) {
     const n = Math.max(8, Math.floor((2 * Math.PI * sc.r) / 6));
     if (sc.k >= n) {
       sc.k = 0;
       sc.r += 6;
       if (sc.r > 100) {
-        civ._sandScan = null;
-        civ.noSand = S.clock + 900;
+        civ._scan[key] = null;
+        civ[cfg.none] = S.clock + 900;
         markDirty(civ);
         return;
       }
@@ -63,43 +88,40 @@ function scanSand(civ) {
     const a = (sc.k++ / n) * Math.PI * 2;
     const x = Math.floor(civ.center.x + Math.cos(a) * sc.r);
     const z = Math.floor(civ.center.z + Math.sin(a) * sc.r);
-    const g = groundAt(dim, x, z);
-    if (!g || g.liquid || g.unnatural) continue;
-    if (!SAND.has(getB(dim, x, g.y, z)?.typeId ?? "")) continue;
-    if (insideWall(civ, x, z)) continue;
-    civ.sandAt = { x, z, y: g.y };
-    civ._sandScan = null;
+    const g = diggable(civ, cfg, dim, x, z);
+    if (!g) continue;
+    civ[cfg.spot] = { x, z, y: g.y };
+    civ._scan[key] = null;
     markDirty(civ);
     return;
   }
 }
 
-/** Клетка с песком рядом с найденным местом (не глубже 4 блоков от исходной поверхности). */
-function sandCell(civ) {
+/** Клетка для копки рядом с найденным местом (не глубже допустимого от исходной поверхности). */
+function digCell(civ, key) {
+  const cfg = DIG[key];
   const dim = DIM();
-  const sp = civ.sandAt;
+  const sp = civ[cfg.spot];
   for (let r = 0; r <= 4; r++) for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) {
     if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
-    const x = sp.x + dx;
-    const z = sp.z + dz;
-    const g = groundAt(dim, x, z);
-    if (!g || g.liquid || g.y < sp.y - 4) continue;
-    if (SAND.has(getB(dim, x, g.y, z)?.typeId ?? "")) return { x, y: g.y, z };
+    const g = diggable(civ, cfg, dim, sp.x + dx, sp.z + dz, sp.y - cfg.depth);
+    if (g) return { x: sp.x + dx, y: g.y, z: sp.z + dz };
   }
   return null;
 }
 
-/** Песочник: идёт к песку, копает и несёт на склад. */
-export function sanderThink(civ, ent, brain, tick) {
-  if (!civ.sandAt) {
-    if ((civ.noSand ?? 0) > S.clock) return wander(civ, brain, 8);
-    scanSand(civ);
-    if (!civ.sandAt) return wander(civ, brain, 8);
+/** Копатель: идёт к месту, копает и несёт на склад. */
+function digThink(key, civ, ent, brain, tick) {
+  const cfg = DIG[key];
+  if (!civ[cfg.spot]) {
+    if ((civ[cfg.none] ?? 0) > S.clock) return wander(civ, brain, 8);
+    scanDig(civ, key);
+    if (!civ[cfg.spot]) return wander(civ, brain, 8);
   }
   if (!brain.dig) {
-    brain.dig = sandCell(civ);
+    brain.dig = digCell(civ, key);
     if (!brain.dig) {
-      civ.sandAt = null; // место выкопано — ищем новое
+      civ[cfg.spot] = null; // место выкопано — ищем новое
       return;
     }
   }
@@ -108,19 +130,25 @@ export function sanderThink(civ, ent, brain, tick) {
   if (!near(ent, brain.target, 3, true)) return;
   const dim = DIM();
   const b = getB(dim, d.x, d.y, d.z);
-  if (b && SAND.has(b.typeId)) {
+  if (b && cfg.ids.has(b.typeId)) {
     try {
       b.setType("minecraft:air");
     } catch {}
-    civ.res.sand = (civ.res.sand ?? 0) + 1;
+    civ.res[key] = (civ.res[key] ?? 0) + 1;
     markDirty(civ);
-    sound(dim, "dig.sand", d);
+    sound(dim, key === "sand" ? "dig.sand" : "dig.grass", d);
     particle(dim, "minecraft:basic_smoke_particle", { x: d.x + 0.5, y: d.y + 0.8, z: d.z + 0.5 });
-    if (!civ.sandNoted) {
-      civ.sandNoted = true;
-      note("events", `${civ.name}: песочники нашли песок (${d.x}, ${d.z})`);
+    const flag = key + "Noted";
+    if (!civ[flag]) {
+      civ[flag] = true;
+      note("events", `${civ.name}: ${cfg.found} (${d.x}, ${d.z})`);
     }
   }
   brain.dig = null;
   brain.cd = tick + Math.max(4, Math.round(12 / S.speed));
 }
+
+/** Песочник: копает песок для стекла. */
+export const sanderThink = (civ, ent, brain, tick) => digThink("sand", civ, ent, brain, tick);
+/** Землекоп: копает землю для выравнивания площадок. */
+export const diggerThink = (civ, ent, brain, tick) => digThink("dirt", civ, ent, brain, tick);

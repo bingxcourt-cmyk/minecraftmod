@@ -11,10 +11,10 @@ import { has } from "./society.js";
 // Цена каждого товара зависит от запаса на рынке: товара мало — дорого, много — дёшево.
 // price = БАЗА × (ЦЕЛЕВОЙ_ЗАПАС / (запас + 1))^0.6 — нижнего предела нет (рынок есть рынок),
 // сверху цена ограничена БАЗА×5, чтобы редкий товар не стал совсем недоступным.
-export const BASE = { wood: 1, stone: 1, andesite: 1.5, food: 2, coal: 4, saplings: 6, sand: 1.5, glass: 4, iron: 64, diamond: 512 };
-const TARGET = { wood: 600, stone: 600, andesite: 300, food: 300, coal: 120, saplings: 30, sand: 400, glass: 300, iron: 30, diamond: 4 };
-const CAP = { wood: 200, stone: 200, andesite: 120, food: 80, coal: 20, saplings: 10, sand: 128, glass: 160, iron: 10, diamond: 2 };
-export const GOOD_NAME = { wood: "дерево", stone: "камень", andesite: "андезит", food: "еда", coal: "уголь", saplings: "саженцы", sand: "песок", glass: "стекло", iron: "железо", diamond: "алмазы" };
+export const BASE = { wood: 1, stone: 1, dirt: 0.5, andesite: 1.5, food: 2, coal: 4, saplings: 6, sand: 1.5, glass: 4, iron: 64, diamond: 512 };
+const TARGET = { wood: 600, stone: 600, dirt: 600, andesite: 300, food: 300, coal: 120, saplings: 30, sand: 400, glass: 300, iron: 30, diamond: 4 };
+const CAP = { wood: 200, stone: 200, dirt: 200, andesite: 120, food: 80, coal: 20, saplings: 10, sand: 128, glass: 160, iron: 10, diamond: 2 };
+export const GOOD_NAME = { wood: "дерево", stone: "камень", dirt: "земля", andesite: "андезит", food: "еда", coal: "уголь", saplings: "саженцы", sand: "песок", glass: "стекло", iron: "железо", diamond: "алмазы" };
 const BID = 0.8;
 const SOCIAL_SAPLINGS = 20; // бесплатных саженцев в фонде на весь мир
 const SOCIAL_PER_CIV = 4; // одному поселению — не больше 4 // рынок покупает дешевле, чем продаёт (его доля)
@@ -46,7 +46,7 @@ export function price(k) {
 function needsOf(civ) {
   const need = {};
   const rc = remainingCost(civ);
-  const map = { дерево: "wood", камень: "stone", железо: "iron", еда: "food", стекло: "glass", песок: "sand" };
+  const map = { дерево: "wood", камень: "stone", железо: "iron", еда: "food", стекло: "glass", песок: "sand", земля: "dirt" };
   // Стройка встала из-за ресурса.
   const w = map[civ.waiting];
   if (w) need[w] = Math.max(1, rc[w] - (civ.res[w] ?? 0));
@@ -96,6 +96,7 @@ function spareOf(civ) {
     coal: Math.ceil((civ.lights?.length ?? 0) / 4) + 4,
     iron: Math.max(rc.iron, next.iron ?? 0) + 8,
     glass: glassGoal(civ),
+    dirt: (rc.dirt ?? 0) + 40, // запас земли на выравнивание следующих площадок
     sand: has(civ, "glassworks") ? 1e9 : 0, // песок с заводом идёт в плавку
     diamond: 0,
   };
@@ -197,7 +198,7 @@ export function marketTick() {
       }
     }
     // Склады ломятся — продают часть излишков (кроме камня, нужного на стену).
-    for (const k of ["wood", "stone", "andesite", "food", "sand", "glass"]) {
+    for (const k of ["wood", "stone", "dirt", "andesite", "food", "sand", "glass"]) {
       if (k === "stone" && wallLeft(civ) > 0) continue;
       if (spare[k] > 400) {
         const q = Math.min(CAP[k], Math.floor(spare[k] / 6));

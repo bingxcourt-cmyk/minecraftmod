@@ -1,7 +1,7 @@
 import { system, world, EntityDamageCause } from "@minecraft/server";
 import {
   S, P, DIM, getB, getProp, setProp, dXZ, rnd, pick, markDirty, announce, sound, particle, loaded,
-  civName, civColor, personName, deleteCiv, playersNear, isNight,
+  civName, civColor, personName, deleteCiv, playersNear, isNight, levelOf,
 } from "./core.js";
 import { groundAt, standY, waterNear, findDrySpot } from "./blocks.js";
 import { TYPES, getBP, dims, doorFront, toWorld } from "./blueprints.js";
@@ -10,7 +10,7 @@ import { findSafeSpot, safeTeleport } from "./nav.js";
 import { note, warEndAll } from "./journal.js";
 import { blockerOf, colonySiteFree, clearRuins } from "./territory.js";
 import { isOwnWall, clearWallFor, replanWall } from "./walls.js";
-import { glassShort } from "./industry.js";
+import { glassShort, dirtShort } from "./industry.js";
 import { virtualColony } from "./offscreen.js";
 
 export const ERAS = [
@@ -35,9 +35,11 @@ export function popOf(civ) {
   return (S.members.get(civ.id) ?? []).length;
 }
 
+// В каждой кровати — двухъярусная койка: жилые дома вмещают вдвое больше жителей.
+export const BED_MULT = 2;
 export function housingOf(civ) {
   let n = 3;
-  for (const b of allBuilt(civ)) n += getBP(b.t).beds;
+  for (const b of allBuilt(civ)) n += getBP(b.t).beds * BED_MULT;
   return n;
 }
 
@@ -145,7 +147,7 @@ export function assignRoles(civ) {
     adults.push(e);
   }
   const n = adults.length;
-  const want = { soldier: 0, guard: 0, builder: 0, farmer: 0, hunter: 0, miner: 0, sander: 0, lumberjack: 0 };
+  const want = { soldier: 0, guard: 0, builder: 0, farmer: 0, hunter: 0, miner: 0, sander: 0, digger: 0, lumberjack: 0 };
   let left = n;
   const give = (role, k) => {
     const g = Math.max(0, Math.min(k, left));
@@ -179,6 +181,8 @@ export function assignRoles(civ) {
   if (civ.era >= 2 && n >= 12 && wantMiner) give("miner", 1);
   // Индустриализация: песочники копают песок для стекла (если песок есть поблизости).
   if (glassShort(civ) > 0 && !((civ.noSand ?? 0) > S.clock)) give("sander", n >= 14 ? 2 : 1);
+  // Площадку под стройку нечем подсыпать — землекопы копают землю.
+  if (dirtShort(civ) > 0 && !((civ.noDirt ?? 0) > S.clock)) give("digger", n >= 10 ? 2 : 1);
   if (building && n >= 12) give("builder", 1);
   // Дерева с избытком — лишние руки идут в шахту и на поля.
   if (civ.res.wood > 250 + need.wood) {
@@ -236,7 +240,7 @@ export function hungerTick(civ) {
 }
 
 // ---------- Рост населения ----------
-export const MAX_POP = 50;
+export const MAX_POP = 100;
 export function growthTick(civ) {
   const pop = popOf(civ);
   if (civ.starving || pop >= MAX_POP || pop < 1) return;
@@ -369,7 +373,7 @@ function genCands(civ, type, rMin) {
       let r = 0;
       if (rad > 0) r = Math.abs(vx) > Math.abs(vz) ? (vx > 0 ? 1 : 3) : vz > 0 ? 2 : 0;
       const { W, D } = dims(type, r);
-      out.push({ x: Math.round(px - W / 2), z: Math.round(pz - D / 2), r, W, D });
+      out.push({ x: Math.round(px - W / 2), z: Math.round(pz - D / 2), r, W, D, t: type });
     }
   }
   return out;
@@ -391,6 +395,7 @@ function validate(civ, c, gap = 2) {
   let max = -1e9;
   let sum = 0;
   let cells = 0;
+  const hs = [];
   for (let x = 0; x < c.W; x++) for (let z = 0; z < c.D; z++) {
     // Своя стена не мешает: её здесь разберут и потом перестроят по новому контуру.
     if (civ.wall && isOwnWall(civ, c.x + x, c.z + z)) continue;
@@ -399,16 +404,25 @@ function validate(civ, c, gap = 2) {
     min = Math.min(min, g.y);
     max = Math.max(max, g.y);
     sum += g.y;
+    hs.push(g.y);
     cells++;
   }
-  if (!cells || max - min > (c.W * c.D > 120 ? 4 : 3)) return undefined;
+  if (!cells) return undefined;
+  // Все постройки — на уровне поселения: площадку выравнивают (подсыпают землёй или камнем,
+  // лишнее срезают). Слишком глубокий овраг или крутой холм — место не подходит.
+  const center = c.t === "center" || !civ.buildings.some((b) => b.t === "center");
+  const base = center ? Math.round(sum / cells) : levelOf(civ);
+  if (center && max - min > 4) return undefined;
+  if (!center && (min < base - 6 || max > base + 5)) return undefined;
+  let fill = 0;
+  for (const y of hs) fill += Math.max(0, base - 1 - y);
   // Рядом с водой не строим: выровняют площадку ниже уровня воды — и всё затопит.
   for (let x = -2; x <= c.W + 1; x++) for (let z = -2; z <= c.D + 1; z++) {
     if (x >= 0 && x < c.W && z >= 0 && z < c.D) continue;
     const g = groundAt(dim, c.x + x, c.z + z);
     if (g?.liquid) return undefined;
   }
-  return { base: Math.round(sum / cells), max };
+  return { base, max, fill };
 }
 
 export function searchTick(civ, paidOnly = false) {
@@ -447,7 +461,7 @@ export function searchTick(civ, paidOnly = false) {
       }
       continue;
     }
-    civ.project = { t: s.t, x: c.x, y: v.base, z: c.z, r: c.r, step: 0, fromQueue: s.fromQueue, paid: !!s.paid };
+    civ.project = { t: s.t, x: c.x, y: v.base, z: c.z, r: c.r, step: 0, fromQueue: s.fromQueue, paid: !!s.paid, fill: v.fill + 8 };
     // Новая постройка выходит за стену — этот кусок стены разбирают (брешь до перестройки).
     if (civ.wall) clearWallFor(civ, { x: c.x, z: c.z, w: c.W, d: c.D });
     if (!s.paid) noteBuilt(civ, s.t);
@@ -521,6 +535,7 @@ export function completeProject(civ) {
   civ.buildings.push(b);
   if (p.fromQueue) civ.qi++;
   if (p.t === "center") {
+    civ.level = p.y;
     const bp = getBP("center");
     const [x, z] = toWorld(p, p.r, bp.w, bp.d, 2, 2);
     civ.center = { x, y: p.y + 1, z };

@@ -38,7 +38,7 @@ export const RATE = {
 
 /** Профессии в фоне — по тем же правилам, что и вживую, но от текущего населения. */
 function rolesFor(civ, n) {
-  const r = { soldier: 0, builder: 0, farmer: 0, hunter: 0, miner: 0, sander: 0, lumberjack: 0 };
+  const r = { soldier: 0, builder: 0, farmer: 0, hunter: 0, miner: 0, sander: 0, digger: 0, lumberjack: 0 };
   let left = n;
   const give = (role, k) => {
     const g = Math.max(0, Math.min(k, left));
@@ -49,6 +49,7 @@ function rolesFor(civ, n) {
   const foodLow = civ.res.food < n * 3 + 5;
   if (civ.war && n >= 2) give("soldier", Math.max(1, Math.floor(n * 0.45)));
   give("builder", n >= 6 ? 2 : 1);
+  if ((civ.res.dirt ?? 0) < 30 && n >= 3) give("digger", n >= 10 ? 2 : 1);
   if (farms > 0) give("farmer", Math.min(farms * 2, Math.round(n * 0.25) + (foodLow ? 1 : 0)));
   if (farms === 0 || foodLow) give("hunter", 1);
   give("lumberjack", 1);
@@ -56,6 +57,7 @@ function rolesFor(civ, n) {
   if (civ.era >= 2 && n >= 12) give("miner", 1);
   // Песок — только если песочники уже нашли его у поселения (иначе стекло покупают).
   if (civ.sandAt && glassShort(civ) > 0) give("sander", n >= 14 ? 2 : 1);
+
   // Дерева с избытком — лишние руки в шахту и на поля (как вживую).
   if (civ.res.wood > 250) {
     give("miner", Math.min(3, Math.ceil(left / 2)));
@@ -102,6 +104,9 @@ function gain(civ, off, k, v) {
 const totalCost = (type) => {
   const c = { wood: 0, stone: 0, iron: 0, food: 0 };
   for (const op of getBP(type).ops) for (const k in op.cost ?? {}) c[k] = (c[k] ?? 0) + op.cost[k];
+  // Выравнивание площадки: в среднем треть блока земли на клетку (центр задаёт уровень сам).
+  const bp = getBP(type);
+  c.dirt = type === "center" ? 0 : Math.round(bp.w * bp.d * 0.3);
   return c;
 };
 // Чего не хватает на постройку — рынок купит это для поселения и вдали от игрока.
@@ -137,6 +142,8 @@ export function offscreenTick(civ, dt) {
   if ((T.miner ?? 0) >= 3) gain(civ, off, "diamond", blocks * 0.0006); // алмазы — с железной
   // Песок копают руками (лопат у жителей нет): ~40 блоков в минуту.
   gain(civ, off, "sand", (R.sander ?? 0) * 40 * RATE.eff * k);
+  // Земля: землекопы (~40 в минуту) и то, что срезают при выравнивании и проходке шахты.
+  gain(civ, off, "dirt", ((R.digger ?? 0) * 40 + blocks * 0.05) * RATE.eff * k);
   smeltTick(civ, k);
 
   // Еда и голод.
@@ -160,7 +167,7 @@ export function offscreenTick(civ, dt) {
   } else {
     civ.starving = false;
     off.hunger = Math.max(0, off.hunger - k);
-    // Рождения: раз в 20 секунд, если есть еда и свободные кровати (до 50 жителей).
+    // Рождения: раз в 20 секунд, если есть еда и свободные кровати (до 100 жителей).
     off.birth += k;
     while (off.birth >= 0.35) {
       off.birth -= 0.35;

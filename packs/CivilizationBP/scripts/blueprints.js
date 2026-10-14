@@ -435,8 +435,16 @@ export function makeOps(type, o, r) {
   for (let y = top; y > o.y; y--) for (let x = 0; x < W; x++) for (let z = 0; z < D; z++) {
     ops.push({ k: "c", x: o.x + x, y, z: o.z + z });
   }
-  for (let y = o.y - 3; y < o.y; y++) for (let x = 0; x < W; x++) for (let z = 0; z < D; z++) {
+  // Подсыпка площадки до уровня поселения (снизу вверх) — землёй, а если её долго нет — камнем.
+  for (let y = o.y - 7; y < o.y; y++) for (let x = 0; x < W; x++) for (let z = 0; z < D; z++) {
     ops.push({ k: "f", x: o.x + x, y, z: o.z + z });
+  }
+  // Пандус перед входом: спуск или подъём на 1 блок за шаг, чтобы жители могли зайти с земли.
+  const cx = Math.floor(bp.w / 2);
+  for (let k = 1; k <= 6; k++) for (let dx = -1; dx <= 1; dx++) {
+    const [wx, wz] = toWorld(o, r, bp.w, bp.d, cx + dx, -k);
+    for (let y = o.y - 7; y <= o.y - k; y++) ops.push({ k: "f", x: wx, y, z: wz, ramp: true });
+    for (let y = o.y + 6; y >= o.y + k; y--) ops.push({ k: "c", x: wx, y, z: wz, ramp: true });
   }
   for (const op of bp.ops) {
     const [wx, wz] = toWorld(o, r, bp.w, bp.d, op.x, op.z);

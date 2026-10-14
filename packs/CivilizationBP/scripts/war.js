@@ -25,7 +25,7 @@ function title(civs, text, sub) {
 }
 
 // Названия ресурсов для причин войны.
-const RES_RU = { wood: "дерево", stone: "камень", food: "еду", iron: "железо", coal: "уголь", andesite: "андезит", saplings: "саженцы", diamond: "алмазы", coins: "монеты", torches: "факелы", sand: "песок", glass: "стекло", land: "землю" };
+const RES_RU = { wood: "дерево", stone: "камень", food: "еду", iron: "железо", coal: "уголь", andesite: "андезит", saplings: "саженцы", diamond: "алмазы", coins: "монеты", torches: "факелы", sand: "песок", glass: "стекло", dirt: "грунт", land: "землю" };
 
 export function declareWar(a, b, opts = {}) {
   const reason = opts.reason ?? "соперничество";

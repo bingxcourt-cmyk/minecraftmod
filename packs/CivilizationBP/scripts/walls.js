@@ -1,6 +1,6 @@
-import { S, DIM, getB, loaded, markDirty, sound, particle } from "./core.js";
-import { groundAt, isPassableId } from "./blocks.js";
-import { remainingCost } from "./workers.js";
+import { S, DIM, getB, loaded, markDirty, sound, particle, levelOf } from "./core.js";
+import { groundAt, isPassableId, isNatural } from "./blocks.js";
+import { remainingCost, digYield } from "./workers.js";
 import { deferLight } from "./lights.js";
 import { note, warLog } from "./journal.js";
 
@@ -119,7 +119,7 @@ const encode = (ox, oz, cols) => cols.map((c) => enc(c.x - ox) + enc(c.z - oz)).
 function geo(civ) {
   const w = civ.wall;
   if (!w) return null;
-  if (civ._wg?.c === w.c) return civ._wg;
+  if (civ._wg?.c === w.c && civ._wg.rg === (w.rg ?? "")) return civ._wg;
   const cols = [];
   for (let i = 0; i < w.c.length; i += 4) cols.push({ x: w.ox + parseInt(w.c.slice(i, i + 2), 36), z: w.oz + parseInt(w.c.slice(i + 2, i + 4), 36) });
   const idx = new Map(cols.map((c, i) => [`${c.x},${c.z}`, i]));
@@ -139,6 +139,11 @@ function geo(civ) {
       }
     });
     if (best >= 0) gates.add(best);
+  }
+  // Ворота, к которым подходят дороги от соседей.
+  for (const k of (w.rg ?? "").split(";")) {
+    const i = idx.get(k);
+    if (i !== undefined) gates.add(i);
   }
   // Сетка «внутри/снаружи» для проверки, за стеной ли точка.
   let x0 = Infinity;
@@ -169,7 +174,7 @@ function geo(civ) {
     if (j > 0) stack.push(k - 1);
     if (j < D - 1) stack.push(k + 1);
   }
-  civ._wg = { c: w.c, cols, idx, gates, x0, z0, W, D, grid };
+  civ._wg = { c: w.c, rg: w.rg ?? "", cols, idx, gates, x0, z0, W, D, grid };
   return civ._wg;
 }
 
@@ -236,7 +241,7 @@ export function replanWall(civ) {
   });
   if (!added && !removed.length && s === st) return;
   civ.res.stone = (civ.res.stone ?? 0) + refund;
-  civ.wall = { ox: r.ox, oz: r.oz, c: encode(r.ox, r.oz, r.cols), s, cur: 0, repairAt: civ.wall.repairAt };
+  civ.wall = { ox: r.ox, oz: r.oz, c: encode(r.ox, r.oz, r.cols), s, cur: 0, repairAt: civ.wall.repairAt, rg: civ.wall.rg };
   if (removed.length) queueDemolish(removed);
   markDirty(civ);
   note("build", `${civ.name}: перестраивают стену под новые границы (+${added} столбов, разобрано ${removed.length})`);
@@ -300,26 +305,46 @@ function setIf(b, id) {
   } catch {}
 }
 
-/** Ставит один столб стены. false — чанк не загружен. */
+/**
+ * Ставит один столб стены. Низ стены — на уровне поселения: в низине под стену кладут фундамент
+ * из каменного кирпича (камень со склада), на холме грунт срезают. false — пока нельзя (чанк не
+ * загружен или не хватает камня на фундамент).
+ */
 function placeColumn(civ, g, i) {
   const dim = DIM();
   const { x, z } = g.cols[i];
   if (!loaded(dim, { x, z })) return false;
   const gr = groundAt(dim, x, z);
   if (!gr) return false;
-  if (gr.liquid) return true;
+  if (gr.liquid) return true; // в воде стену не ставят
   const top = getB(dim, x, gr.y, z);
   if (!top) return false;
-  const road = ROADISH.has(top.typeId);
-  if (gr.unnatural && !road) return true; // дом или чужая постройка — обходим
+  const base = levelOf(civ);
+  // Дорога на уровне поселения — здесь калитка; верх уже стоящей стены дорогой не считается.
+  const road = ROADISH.has(top.typeId) && gr.y <= base + 1;
+  const ownWall = top.typeId === "minecraft:stone_bricks" && gr.y > base + 1;
+  if (gr.unnatural && !road && !ownWall) return true; // дом или чужая постройка — обходим
+  if (gr.y < base - 12 || gr.y > base + 12) return true; // обрыв или скала — столб пропускают
   const gate = road || g.gates.has(i);
-  // Расчистка: трава, листва, брёвна.
-  for (let k = 1; k <= 8; k++) {
-    const b = getB(dim, x, gr.y + k, z);
-    if (b && !b.isAir && (isPassableId(b.typeId) || b.typeId.endsWith("leaves") || b.typeId.endsWith("_log"))) setIf(b, "minecraft:air");
+  // Фундамент до уровня поселения.
+  const found = Math.max(0, base - gr.y);
+  if (found > 0) {
+    if ((civ.res.stone ?? 0) < found) return false;
+    civ.res.stone -= found;
+    for (let y = gr.y + 1; y <= base; y++) setIf(getB(dim, x, y, z), "minecraft:stone_bricks");
+  }
+  // Срезаем всё выше уровня поселения (грунт — на склад), расчищаем траву, листву, брёвна.
+  for (let y = base + 1; y <= Math.max(base + 8, gr.y + 1); y++) {
+    const b = getB(dim, x, y, z);
+    if (!b || b.isAir) continue;
+    if (b.isLiquid) continue;
+    if (isPassableId(b.typeId) || b.typeId.endsWith("leaves") || b.typeId.endsWith("_log") || isNatural(b.typeId)) {
+      if (!isPassableId(b.typeId)) digYield(civ, b.typeId);
+      setIf(b, "minecraft:air");
+    }
   }
   for (let k = 1; k <= 6; k++) {
-    const b = getB(dim, x, gr.y + k, z);
+    const b = getB(dim, x, base + k, z);
     if (!b) continue;
     if (gate && k === 1) setIf(b, "minecraft:spruce_fence_gate");
     else if (gate && k === 2) setIf(b, "minecraft:air");
@@ -327,10 +352,54 @@ function placeColumn(civ, g, i) {
   }
   // Зубцы-бойницы через блок, факел примерно на каждом восьмом столбе.
   if ((x + z) % 2 === 0) {
-    setIf(getB(dim, x, gr.y + 7, z), "minecraft:stone_bricks");
-    if (i % 8 === 0) deferLight(civ, x, gr.y + 8, z, "minecraft:torch");
+    setIf(getB(dim, x, base + 7, z), "minecraft:stone_bricks");
+    if (i % 8 === 0) deferLight(civ, x, base + 8, z, "minecraft:torch");
   }
+  markDirty(civ);
   return true;
+}
+
+/** Дорога от соседа подходит к стене: ближайший к соседу столб становится воротами. Возвращает точку снаружи. */
+export function roadGate(civ, toward) {
+  migrate(civ);
+  const g = geo(civ);
+  if (!g || !g.cols.length) return null;
+  let best = -1;
+  let bd = Infinity;
+  g.cols.forEach((c, i) => {
+    const d = Math.hypot(c.x - toward.x, c.z - toward.z);
+    if (d < bd) {
+      bd = d;
+      best = i;
+    }
+  });
+  const c = g.cols[best];
+  let dx = c.x - civ.center.x;
+  let dz = c.z - civ.center.z;
+  const l = Math.hypot(dx, dz) || 1;
+  dx /= l;
+  dz /= l;
+  return { x: Math.round(c.x + dx * 2), z: Math.round(c.z + dz * 2), key: `${c.x},${c.z}` };
+}
+
+/** Ворота под дороги: ровно те столбы, к которым сейчас подходят дороги. */
+export function setRoadGates(civ, keys) {
+  const w = civ.wall;
+  if (!w?.s) return;
+  const rg = [...new Set(keys)].sort().join(";");
+  if ((w.rg ?? "") === rg) return;
+  const g = geo(civ);
+  const old = new Set((w.rg ?? "").split(";"));
+  const chars = w.s.split("");
+  // Новые ворота и бывшие ворота перекладывают (столб уже стоит — кладут заново).
+  for (const k of new Set([...keys, ...old])) {
+    if (!k || keys.includes(k) === old.has(k)) continue;
+    const i = g.idx.get(k);
+    if (i !== undefined && chars[i] === "1") chars[i] = "p";
+  }
+  w.s = chars.join("");
+  w.rg = rg;
+  markDirty(civ);
 }
 
 /** Разбор столбов сверху вниз до настоящей земли. */

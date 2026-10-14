@@ -1,6 +1,6 @@
 import { BlockPermutation, EntityDamageCause, system } from "@minecraft/server";
 import { S, P, DIM, getB, getProp, setProp, dXZ, rnd, pick, markDirty, sound, particle, cdTicks, loaded } from "./core.js";
-import { isLog, isLeaves, isProtected, isPassableId, isNaturalGround, walkY, standY, strip, groundAt, GATE } from "./blocks.js";
+import { isLog, isLeaves, isProtected, isPassableId, isNaturalGround, isNatural, walkY, standY, strip, groundAt, GATE } from "./blocks.js";
 import { tryBreakWall, insideWall, wallShare, hostileWallCiv, outsidePoint } from "./walls.js";
 import { makeOps, cropCells, dims } from "./blueprints.js";
 import { findPath, findSafeSpot, rescueIfStuck } from "./nav.js";
@@ -11,11 +11,11 @@ import { guardThink, armorOf, ARMOR_NAME } from "./defense.js";
 import { ERAS } from "./society.js";
 import { TOOL_FOR, TIERS, toolLabel, craftNeed, craft, useTool } from "./tools.js";
 import { note } from "./journal.js";
-import { sanderThink } from "./industry.js";
+import { sanderThink, diggerThink } from "./industry.js";
 
 export const ROLE_NAME = {
   lumberjack: "Лесоруб", miner: "Шахтёр", farmer: "Фермер", hunter: "Охотник", builder: "Строитель",
-  soldier: "Воин", guard: "Стражник", sander: "Песочник", raider: "Бандит", settler: "Переселенец", child: "Ребёнок", golem: "Страж", "": "Житель",
+  soldier: "Воин", guard: "Стражник", sander: "Песочник", digger: "Землекоп", raider: "Бандит", settler: "Переселенец", child: "Ребёнок", golem: "Страж", "": "Житель",
 };
 
 // ---------- Мозг жителя ----------
@@ -594,21 +594,62 @@ export function projectOps(civ) {
 /** Сколько ресурсов ещё нужно, чтобы достроить текущую постройку. */
 export function remainingCost(civ) {
   const p = civ.project;
-  const need = { wood: 0, stone: 0, iron: 0, food: 0, glass: 0 };
+  const need = { wood: 0, stone: 0, iron: 0, food: 0, glass: 0, dirt: 0 };
   if (!p || p.paid) return need;
   // Пересчёт дорогой (тысячи блоков) — запоминаем, пока стройка не продвинулась.
   const key = `${p.t}:${p.x},${p.z},${p.r}:${p.step}`;
-  if (civ._rc?.key === key) return { ...civ._rc.need };
+  if (civ._rc?.key === key) return { ...civ._rc.need, dirt: p.fill ?? 0 };
   const ops = projectOps(civ);
   for (let i = p.step; i < ops.length; i++) {
     const c = ops[i].cost;
     if (c) for (const k in c) need[k] = (need[k] ?? 0) + c[k];
   }
+  // Земля на выравнивание площадки (оценка при выборе места, уменьшается по мере подсыпки).
+  need.dirt = p.fill ?? 0;
   civ._rc = { key, need: { ...need } };
   return need;
 }
 
-export const RES_NAME = { wood: "дерево", stone: "камень", iron: "железо", food: "еда", glass: "стекло", sand: "песок" };
+export const RES_NAME = { wood: "дерево", stone: "камень", iron: "железо", food: "еда", glass: "стекло", sand: "песок", dirt: "земля" };
+
+// Срезанный при выравнивании грунт идёт на склад: земля, камень, песок.
+const DIRTY = new Set(["minecraft:dirt", "minecraft:grass_block", "minecraft:coarse_dirt", "minecraft:podzol", "minecraft:rooted_dirt", "minecraft:mycelium", "minecraft:grass_path", "minecraft:dirt_path", "minecraft:mud"]);
+export function digYield(civ, id) {
+  if (DIRTY.has(id)) civ.res.dirt = (civ.res.dirt ?? 0) + 1;
+  else if (id === "minecraft:sand" || id === "minecraft:red_sand") civ.res.sand = (civ.res.sand ?? 0) + 1;
+  else if (isNaturalGround(id) && !id.endsWith("_ore")) civ.res.stone = (civ.res.stone ?? 0) + 1;
+}
+
+/** Чем подсыпать площадку: земля со склада, а если стройка ждёт её дольше 30 секунд — камень. */
+function fillMaterial(civ) {
+  const p = civ.project;
+  if ((civ.res.dirt ?? 0) >= 1) {
+    civ.res.dirt--;
+    p.fill = Math.max(0, (p.fill ?? 1) - 1);
+    p.dirtWait = 0;
+    return "minecraft:dirt";
+  }
+  p.dirtWait = p.dirtWait || S.clock;
+  if (S.clock - p.dirtWait >= 30 && (civ.res.stone ?? 0) >= 1) {
+    civ.res.stone--;
+    p.fill = Math.max(0, (p.fill ?? 1) - 1);
+    return "minecraft:cobblestone";
+  }
+  return null;
+}
+
+/** Пандус у входа не трогает соседние постройки и чужие блоки. */
+function rampOk(civ, op, id) {
+  if (insideBuildings(civ, op.x, op.z, 0) && !insideProject(civ, op.x, op.z)) return false;
+  return op.k === "f" || isNatural(id);
+}
+
+function insideProject(civ, x, z) {
+  const p = civ.project;
+  if (!p) return false;
+  const { W, D } = dims(p.t, p.r);
+  return x >= p.x && x < p.x + W && z >= p.z && z < p.z + D;
+}
 
 function canPay(civ, cost) {
   for (const k in cost) if ((civ.res[k] ?? 0) < cost[k]) return k;
@@ -673,9 +714,10 @@ export function fastBuild(civ, maxOps) {
     if (!b) return "wait";
     try {
       if (op.k === "c") {
-        if (!b.isAir && !isProtected(b.typeId)) b.setType("minecraft:air");
+        if (!b.isAir && !isProtected(b.typeId) && !(op.ramp && !rampOk(civ, op, b.typeId))) b.setType("minecraft:air");
       } else if (op.k === "f") {
-        if (b.isAir || b.isLiquid || isPassableId(b.typeId)) b.setType("minecraft:dirt");
+        // Оплачено в фоне (земля списана по оценке) — подсыпают сразу.
+        if ((b.isAir || b.isLiquid || isPassableId(b.typeId)) && !(op.ramp && !rampOk(civ, op, b.typeId))) b.setType("minecraft:dirt");
       } else if (isLight(op.id)) {
         if (b.typeId !== op.id) deferLight(civ, op.x, op.y, op.z, op.id);
       } else if (!(b.typeId === op.id && !op.pair)) placeOp(dim, op);
@@ -699,7 +741,7 @@ export function buildStep(civ) {
     if (!b) return false;
     const id = b.typeId;
     if (op.k === "c") {
-      if (b.isAir || isProtected(id)) {
+      if (b.isAir || isProtected(id) || (op.ramp && !rampOk(civ, op, id))) {
         p.step++;
         continue;
       }
@@ -707,14 +749,21 @@ export function buildStep(civ) {
         b.setType("minecraft:air");
       } catch {}
       if (isLog(id)) civ.res.wood += 2;
+      else digYield(civ, id);
       p.step++;
       if (++changes >= 4) break;
       continue;
     }
     if (op.k === "f") {
-      if (b.isAir || b.isLiquid || isPassableId(id)) {
+      if ((b.isAir || b.isLiquid || isPassableId(id)) && !(op.ramp && !rampOk(civ, op, id))) {
+        // Выравнивание: сначала землёй; если земли долго нет (стройка стоит 30 с) — камнем.
+        const mat = fillMaterial(civ);
+        if (!mat) {
+          civ.waiting = "земля";
+          return false;
+        }
         try {
-          b.setType("minecraft:dirt");
+          b.setType(mat);
         } catch {}
         changes++;
       }
@@ -823,6 +872,7 @@ export function think(civ, ent, brain, tick, hooks) {
     case "raider": return hooks.raider(civ, ent, brain, tick);
     case "settler": return hooks.settler(civ, ent, brain, tick);
     case "sander": return sanderThink(civ, ent, brain, tick);
+    case "digger": return diggerThink(civ, ent, brain, tick);
     case "child": return wander(civ, brain, 6);
     default: return wander(civ, brain, 8);
   }
