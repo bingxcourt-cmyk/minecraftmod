@@ -30,7 +30,7 @@ ok("2. скорость игры и игровое время не влияют 
 // 3. Несколько зданий.
 const total = U.totalBuildCost(civ);
 const exp = {};
-for (const [k, v] of Object.entries(total)) exp[k] = v * 0.06;
+for (const [k, v] of Object.entries(total)) exp[k] = v * U.UPKEEP.RATE;
 const { need, value } = U.upkeepFor(civ);
 ok("3. содержание = 6% суммарной стоимости всех зданий", Object.keys(exp).every((k) => Math.abs(exp[k] - need[k]) < 1e-9),
   `стоимость ${JSON.stringify(total)} → за период ${JSON.stringify(Object.fromEntries(Object.entries(need).map(([k, v]) => [k, +v.toFixed(3)])))}, по рынку ${fmtCoins(value)} мон.`);

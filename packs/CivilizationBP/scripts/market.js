@@ -148,6 +148,8 @@ function needsOf(civ) {
     else if (!has(civ, "glassworks")) need.glass = gShort;
   }
   if (has(civ, "glassworks") && (civ.res.sand ?? 0) > 0 && !(civ.res.coal > 0)) need.coal = Math.max(need.coal ?? 0, Math.ceil(civ.res.sand / 8));
+  // Долг по содержанию зданий — недостающие ресурсы докупают на рынке за монеты.
+  for (const [k, v] of Object.entries(civ.upkeep?.debt ?? {})) if (v > 0 && CAP[k]) need[k] = Math.max(need[k] ?? 0, v);
   // Нет леса — нужны саженцы.
   if (civ.needSaplings) need.saplings = Math.max(0, 8 - (civ.res.saplings ?? 0));
   for (const k in need) need[k] = Math.min(CAP[k], Math.ceil(need[k]));
