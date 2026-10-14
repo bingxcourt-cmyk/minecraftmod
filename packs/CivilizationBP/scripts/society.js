@@ -426,7 +426,7 @@ function validate(civ, c, gap = 2) {
   return { base, max, fill };
 }
 
-export function searchTick(civ, paidOnly = false) {
+export function searchTick(civ, paidOnly = false, tries = 4) {
   if (civ.project) return;
   if (paidOnly && !civ.offQueue?.length && !S.search.get(civ.id)) return;
   let s = S.search.get(civ.id);
@@ -452,7 +452,7 @@ export function searchTick(civ, paidOnly = false) {
     S.search.set(civ.id, s);
     civ._reassign = true;
   }
-  for (let k = 0; k < 4 && s.i < s.cands.length; k++) {
+  for (let k = 0; k < tries && s.i < s.cands.length; k++) {
     const c = s.cands[s.i++];
     const v = validate(civ, c);
     if (!v) {
@@ -554,7 +554,7 @@ export function completeProject(civ) {
   note("build", `${civ.name}: построено «${TYPES[p.t].name}»`);
   if (p.t !== "center") layRoad(civ.center, doorFront(b));
   // Поселение выросло — стену перестраивают под новые габариты.
-  if (civ.wall) replanWall(civ);
+  if (civ.wall && !civ._batch) replanWall(civ);
 }
 
 /** Тропинка от центра до входа в постройку. */
@@ -699,22 +699,42 @@ export function colonyCheck(civ) {
  * (в пределах прорисовки, даже если поселение далеко).
  */
 export function streamBuild(civ) {
-  if (!civ.project && civ.offQueue?.length) searchTick(civ, true);
-  const p = civ.project;
-  if (!p?.paid || civ._fastJob) return;
+  if (civ._fastJob) return;
+  if (!civ.project?.paid && !(civ.offQueue?.length && !civ.project)) return;
   civ._fastJob = true;
+  // Всё, что оплачено в фоне, возводится подряд, без пауз: место ищут сразу по многим вариантам,
+  // постройку ставят большими порциями, следующую начинают сразу за предыдущей.
+  // Стену перестраивают один раз — в конце, а не после каждого дома.
   function* job() {
-    for (;;) {
-      if (civ.project !== p || !S.civs.has(civ.id)) break;
-      const r = fastBuild(civ, 120);
-      if (r === "done") {
-        completeProject(civ);
-        break;
+    let built = 0;
+    let misses = 0;
+    civ._batch = true;
+    try {
+      for (;;) {
+        if (!S.civs.has(civ.id)) break;
+        if (!civ.project) {
+          if (!civ.offQueue?.length) break;
+          searchTick(civ, true, 12);
+          if (!civ.project) {
+            if (++misses > 400) break; // мест нет — попробуют в следующий раз
+            yield;
+            continue;
+          }
+          misses = 0;
+        }
+        if (!civ.project.paid) break;
+        const r = fastBuild(civ, 400);
+        if (r === "done") {
+          completeProject(civ);
+          built++;
+        } else if (r === "wait") break;
+        yield;
       }
-      if (r === "wait") break;
-      yield;
+    } finally {
+      civ._batch = false;
+      civ._fastJob = false;
+      if (built && civ.wall) replanWall(civ);
     }
-    civ._fastJob = false;
   }
   system.runJob(job());
 }
