@@ -113,15 +113,26 @@ export function groundAt(dim, x, z) {
     if (!b) return undefined;
     const id = b.typeId;
     // Водоросли, морская трава и прочее подводное — тоже вода (иначе морское дно казалось бы сушей).
-    if (b.isLiquid || id.includes("water") || id.includes("lava") || UNDERWATER.has(strip(id)) || b.isWaterlogged) return { y, liquid: true, unnatural };
+    if (b.isLiquid || id.includes("water") || id.includes("lava") || UNDERWATER.has(strip(id)) || id.includes("coral") || b.isWaterlogged) return { y, liquid: true, unnatural };
     if (b.isAir || isPassableId(id) || isLeaves(id) || isLog(id) || SOFT.has(strip(id))) {
       if (!isNatural(id)) unnatural = true;
       continue;
     }
     if (!isNatural(id)) unnatural = true;
+    // Твёрдый блок, а над ним вода: это морское дно (верхний блок оказался не водой — например,
+    // getTopmostBlock пропустил воду или сверху висит лёд/лилия). Возвращаем поверхность воды.
+    let w = y + 1;
+    while (w < y + 64 && isWet(getB(dim, x, w, z))) w++;
+    if (w > y + 1) return { y: w - 1, liquid: true, unnatural };
     return { y, liquid: false, unnatural };
   }
   return undefined;
+}
+
+function isWet(b) {
+  if (!b) return false;
+  const id = b.typeId;
+  return b.isLiquid || id.includes("water") || UNDERWATER.has(strip(id)) || id.includes("coral") || b.isWaterlogged;
 }
 
 // Калитки в стене: свои жители проходят, бандиты и вражеские армии — нет (им приходится ломать стену).
